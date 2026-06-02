@@ -534,7 +534,7 @@ def main():
         # STEP 3 — velocities
         # =======================
         angle = ds["ANGLE"].values
-        vel_source_grid = "source_grid_vel.txt"
+        vel_source_grid = "Results/source_grid_vel.txt"
         create_cice_velocity_gridfile(first_file, vel_source_grid)
          
         ds_angle_t = xr.open_dataset(refgrid_angle)
@@ -554,8 +554,8 @@ def main():
                 "ANGLE": ds["ANGLE"]
             })
 
-            temp_uv = "temp_uv.nc"
-            temp_uv_withgrid = "temp_uv_withgrid.nc"
+            temp_uv = "Results/temp_uv.nc"
+            temp_uv_withgrid = "Results/temp_uv_withgrid.nc"
 
             for f in [temp_uv, temp_uv_withgrid]:
                 if os.path.exists(f):
