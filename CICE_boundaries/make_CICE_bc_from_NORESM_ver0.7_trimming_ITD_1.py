@@ -74,9 +74,9 @@ def main():
     #
     # by Hiroshi Sumata / 2022.09.14
     
-    refgrid_t = 'iceh.2015-11.selvar.tmask.nc'  # referece for CICE T-grid 
-    refgrid_u = 'iceh.2015-11.selvar.sig2.nc'   # referece for CICE UV-grid
-    refgrid_angle = 'iceh.2015-11.selvar.ANGLE.nc' # reference for rotation angle of CICE grid
+    refgrid_t = '/cluster/shared/arcticfjord/hs/A4_S4K/prog_fram/008_CICE_boundary_condition_ITD_2014/iceh.2015-11.selvar.tmask.nc'  # referece for CICE T-grid 
+    refgrid_u = '/cluster/shared/arcticfjord/hs/A4_S4K/prog_fram/008_CICE_boundary_condition_ITD_2014/iceh.2015-11.selvar.sig2.nc'   # referece for CICE UV-grid
+    refgrid_angle = '/cluster/shared/arcticfjord/hs/A4_S4K/prog_fram/008_CICE_boundary_condition_ITD_2014/iceh.2015-11.selvar.ANGLE.nc' # reference for rotation angle of CICE grid
     
     #=====================================================================================
     # NOTE: 2m air temperature data is processed as follows,
@@ -154,10 +154,10 @@ def main():
     #             von Albedyll et al.(2021, TC) 0.14-0.27, and personal communiction, D. Divine
     #             (2023, slide "CICE_experiment_ITD.odg, page 12).
 
-    with open("ITD_period_1.pkl", 'rb') as f:
+    with open("/cluster/shared/arcticfjord/hs/A4_S4K/prog_fram/008_CICE_boundary_condition_ITD_2014/ITD_period_1.pkl", 'rb') as f:
         xbin, yfits_1_normalized, level_ice1 = pickle.load(f)
 
-    with open("ITD_period_2.pkl", 'rb') as f:
+    with open("/cluster/shared/arcticfjord/hs/A4_S4K/prog_fram/008_CICE_boundary_condition_ITD_2014/ITD_period_2.pkl", 'rb') as f:
         xbin, yfits_2_normalized, level_ice2 = pickle.load(f)        
 
     ## check array size --- [OK]
@@ -322,8 +322,8 @@ def main():
 
     fill_value = -9999  # fill value for land / masked points
 
-    source_grid = "source_grid.txt"
-    target_grid = "target_grid.txt"
+    source_grid = "Results/source_grid.txt"
+    target_grid = "Results/target_grid.txt"
 
     # =========================================================
     # FUNCTION: CREATE CLEAN CICE GRID FILE
@@ -442,8 +442,8 @@ def main():
 
         ds_2d = ds[scalars_2D]
 
-        tempfile_2d = "temp_2d.nc"
-        temp_with_grid = "temp_2d_withgrid.nc"
+        tempfile_2d = "Results/temp_2d.nc"
+        temp_with_grid = "Results/temp_2d_withgrid.nc"
 
         # Remove previous files if they exist
         for f in [tempfile_2d, temp_with_grid]:
@@ -455,7 +455,7 @@ def main():
 
         run_cdo(f"cdo setgrid,{source_grid} {tempfile_2d} {temp_with_grid}")
 
-        outfile_2d = f"out_2d.nc"
+        outfile_2d = f"Results/out_2d.nc"
         if os.path.exists(outfile_2d):
             os.remove(outfile_2d)
 
@@ -491,8 +491,8 @@ def main():
           for ncat in range(ds.sizes['nc']):
              print(f"  Processing category {ncat} for variable {var}")
              ds_cat = ds[var].isel(nc=ncat)  # Select data for the current category
-             temp_cat = f"temp_cat_{var}.nc"  # Temporary file for the current category
-             temp_cat_grid = "temp_cat_grid_var}.nc"  # Temporary file with grid info
+             temp_cat = f"Results/temp_cat_{var}.nc"  # Temporary file for the current category
+             temp_cat_grid = "Results/temp_cat_grid_var}.nc"  # Temporary file with grid info
              # Remove previous files if they exist
              for f in [temp_cat, temp_cat_grid]:
                 if os.path.exists(f):
@@ -525,7 +525,7 @@ def main():
         print("\nVariables in ds_out after processing scalars_per_cat:")
         print(list(ds_out.data_vars)) 
         # Write the combined dataset to a single NetCDF file
-        output_file = "temp_scalars_per_cat.nc"
+        output_file = "Results/temp_scalars_per_cat.nc"
         print(f"\nWriting all category variables to {output_file}")
         ds_out.to_netcdf(output_file)
         print(f"✔ All category variables written to {output_file}")
@@ -613,7 +613,7 @@ def main():
             ds_out[var].values = data
 
         encoding = {var: {'_FillValue': fill_value} for var in ds_out.data_vars}
-        outfile = f"out_all_{date_str}.nc"
+        outfile = f"Results/out_all_{date_str}.nc"
         # Fix time encoding issues
         if "time" in ds_out:
             ds_out["time"].attrs.pop("units", None)
@@ -833,7 +833,7 @@ def main():
                             
         # (6) regrid TOPAZ ice velocity to the CICE grid ---
 
-        outfile = './temp_uv.nc'
+        outfile = 'Results/temp_uv.nc'
         command = 'ls -al ' + infile
         os.system(command)
         command = 'cdo remapbil,' + refgrid_u + ' ' + infile + ' ' + outfile
