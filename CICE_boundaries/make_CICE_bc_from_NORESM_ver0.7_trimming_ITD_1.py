@@ -67,7 +67,7 @@ def main():
     # t grid : cdo selvar,tmask iceh.2015-11.nc iceh.2015-11.selvar.tmask.nc
     # uv grid: cdo selvar,sig2 iceh.2015-11.nc iceh.2015-11.selvar.sig2.nc
     # rotation angle: cdo selvar,ANGLE iceh.2015-11.nc iceh.2015-11.selvar.ANGLE.nc
-    #
+    #/
     # NOTE: ANGLE is defined as the rotation angle of CICE X-coordinate relative to eastward
     #       vector (rotation from latitude line to CICE X-axis with anti-clockwise direction 
     #       is defined as positive). See Physical Oceanography Note (117) p118 for detail.
@@ -319,6 +319,7 @@ def main():
     scalars_2D = ["hi","ardg","sirdgthick","sitempsnic","sitemptop","sitempbot","siage"]
     scalars_per_cat = ["aicen","siitdthick","siitdsnthick"]
     vectors_to_keep  = ["siu","siv"]
+    scalars_2D_atm =["TS"]
 
     fill_value = -9999  # fill value for land / masked points
 
@@ -603,6 +604,7 @@ def main():
 
             ds_remap.close()
 
+        
         # ============================
         # STEP 4 — Fill land mask
         # ===========================
@@ -621,52 +623,111 @@ def main():
         ds_out.to_netcdf(outfile, encoding=encoding)
         ds_out.close()
 
-        breakpoint()
-        # (3) read TOPAZ variables defined on T-grid ---
+
+
+        # =========================================================
+        # STEP 5 — Combine all results into a single file
+        # =========================================================
+        # Paths to the intermediate files
+        outfile_2d = "Results/out_2d.nc"
+        # Load the 2D variables and category variables
+        ds_2d = xr.open_dataset(outfile_2d)
+        ds_all = xr.open_dataset(outfile)
+        # Merge the datasets
+        combined_ds = xr.merge([ds_2d, ds_all])
+        # Define the output file name for the combined dataset
+        combined_outfile = f"Results/combined_{date_str}.nc"
+        # Write the combined dataset to a single NetCDF file
+        print(f"\nWriting combined dataset to {combined_outfile}")
+        combined_ds.to_netcdf(combined_outfile, mode="w")
+        print(f"✔ Combined dataset written to {combined_outfile}")
+        # Close the datasets to free memory
+        ds_2d.close()
+        ds_all.close()
+        combined_ds.close()
+        # Optional: Remove intermediate files to save disk space
+        os.remove(outfile_2d)
+        os.remove(outfile)
         
-        nc = netCDF4.Dataset(outfile, 'r')
+        # =========================================================
+        # STEP 6 — Read and regrid NorESM monthly atm files
+        # =========================================================
+        infile_atm = f"{dir_NORESM_atm}NSSP585frc2_f09_tn14_20191105.cam.h0.{date_str}.nc"
+        print('infile_atm = ',infile_atm)
+        temp_atm = "Results/temp_atm.nc"
+        temp_atm_withgrid = "Results/temp_atm_withgrid.nc"
+
+        ds = xr.open_dataset(infile_atm)
+
+        # Remove previous files if they exist
+        for f in [temp_atm, temp_atm_withgrid]:
+            if os.path.exists(f):
+                os.remove(f)
+
+        ds_atm = ds[scalars_2D_atm]
+        ds_atm.to_netcdf(temp_atm, mode="w")
+        ds_atm.close()
+
+        run_cdo(f"cdo setgrid,{source_grid} {temp_atm} {temp_atm_withgrid}")
+
+        out_atm = f"Results/out_atm.nc"
+        if os.path.exists(outfile_2d):
+            os.remove(out_atm)
+        
+
+        run_cdo(f"cdo remapbil,{target_grid} {temp_atm_withgrid} {out_atm}")
+
+        ds_out = xr.open_dataset(out_atm)
+
+        print("✔ 2D done →", out_atm)
+
+
+        # =========================================================
+        # STEP 7 — Read values 
+        # =========================================================
+        nc = netCDF4.Dataset(combined_outfile, 'r')
         
         nctime = nc.variables['time'][:]
         t_cal = nc.variables['time'].calendar
         t_unit = nc.variables['time'].units
 
-        fice = nc.variables['fice'][0, :, :]     # !CAUTION!! off-set exist, fice.shape = (454, 696)
-        hice = nc.variables['hice'][0, :, :]     # !CAUTION!! off-set exist, hice.shape = (454, 696)
-        hsnow = nc.variables['hsnow'][0, :, :]   # !CAUTION!! off-set exist, hsnow.shape = (454, 696)  
-        fy_age = nc.variables['fy_age'][0, :, :] # !CAUTION!! off-set exist, fy_age.shape = (454, 696)  
-        hice_missing_value = nc.variables['hice'].missing_value
+        aicen = nc.variables['aicen'][0, :, :, :]     # !CAUTION!! off-set exist, fice.shape = (454, 696)
+        vicen = nc.variables['siitdthick'][0, : , :, :]     # !CAUTION!! off-set exist, hice.shape = (454, 696)
+        vsnon = nc.variables['siitdsnthick'][0, :, :, :]   # !CAUTION!! off-set exist, hsnow.shape = (454, 696)  
+        fy_age = nc.variables['siage'][0, :, :] # !CAUTION!! off-set exist, fy_age.shape = (454, 696)  
+        #hice_missing_value = nc.variables['hice'].missing_value
 
-        nj = fice.shape[0]  # nj = 454 for A4_S4K setup
-        ni = fice.shape[1]  # ni = 696 for A4_S4K setup
-        
+        nj = aicen.shape[1]  # nj = 454 for A4_S4K setup
+        ni = aicen.shape[2]  # ni = 696 for A4_S4K setup
+        print('nj =', nj)
+        print('ni =', ni)
+
         tstamp = netCDF4.num2date(nctime, units = t_unit, calendar = t_cal)[0]
         print('infile =', infile)
         print('tstamp =', tstamp)
         nc.close()
-        
-        # (4) read 2m air temperature from ERA5 ----
-
-        file_t2m = file_t2m.replace('yyyy', str(year))
-        nc_t2m = netCDF4.Dataset(file_t2m, 'r')
-        t2m = nc_t2m.variables['Tair'][:]                  # t2m.shape = (365, 454, 696)
-        
+        #breakpoint()
+        nc_t2m = netCDF4.Dataset(out_atm, 'r')
+        t2m = nc_t2m.variables['TS'][:]                  # t2m.shape = (365, 454, 696), "Surface temperature (radiative)" ;
         t2m_nctime = nc_t2m.variables['time'][:]
         t2m_t_unit = nc_t2m.variables['time'].units
-        t2m_t_cal = nc_t2m.variables['time'].calendar
-        t2m_tbounds = nc_t2m.variables['time_bnds'][:]
+        t2m_t_cal = nc_t2m.variables['time'].calendar    # NorESM uses a non-leap year calendar but here I am using monthly
+                                                         # atmosphere results as well as monthly sea ice results. 
+                                                         # Therefore, I need to match only months between atmosphere and ice files
+                                                         # and I do not need to check the time stamps or time bounds
         
-        t2m_tstamps = netCDF4.num2date(t2m_nctime, units = t2m_t_unit, calendar = t2m_t_cal)
-
-        for (n, t2m_tstamp) in enumerate(t2m_tstamps):
-            if t2m_tstamp.year == tstamp.year and \
-               t2m_tstamp.month == tstamp.month and \
-               t2m_tstamp.day == tstamp.day:
-                index = n
-                break
+        #t2m_tstamps = netCDF4.num2date(t2m_nctime, units = t2m_t_unit, calendar = t2m_t_cal)
+        
+        #for (n, t2m_tstamp) in enumerate(t2m_tstamps):
+        #    if t2m_tstamp.year == tstamp.year and \
+        #       t2m_tstamp.month == tstamp.month and \
+        #       t2m_tstamp.day == tstamp.day:
+        #        index = n
+        #        break
                 
-        print('@1: index =', index, ', t2m_stamps[n] =', t2m_tstamps[n])        
-        t2m_now = t2m[index, :, :]                         # unit [deg.C]
-        
+        #print('@1: index =', index, ', t2m_stamps[n] =', t2m_tstamps[n])        
+        t2m_now = t2m[0, :, :]                         # unit [deg.C]
+        breakpoint()
         ## check ----- [OK]    
         #print('t2m_tstamps[index] =', t2m_tstamps[index])
         #print('------------------------------------')
@@ -685,7 +746,7 @@ def main():
             print('          fice.shape =', fice.shape)
             print('          t2m.shape  =', t2m.shape) 
             sys.exit()
-        
+        breakpoint() 
         # (5) make boundary condition for CICE ----
 
         # (5.1) ice category classification ----
@@ -706,7 +767,7 @@ def main():
                         
         # (5.2) define variables necessary for CICE boundary conditions ----
         #
-        # See Physical Oceanography Note (118) p117-119 for description regrading the prescribed
+        # See Physical Oceanography Note (118) p117-119 for description regarding the prescribed
         # ice thickness distribution. Hiroshi Sumata / 2023.03.06
         #
         # IMPORTANT NOTE ---
@@ -734,7 +795,7 @@ def main():
         for j in range(nj):
             for i in range(ni):
                 
-                if fice[j, i] > 0.01 and hice[j, i] > 0.01: # existence of ice follows TOPAZ simulation
+                if fice[j, i] > 0.01 and hice[j, i] > 0.01: # existence of ice follows NorESM simulation
                     
                     for nnc in range(ncat):
 
