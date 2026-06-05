@@ -605,6 +605,7 @@ def main():
         vsnon = np.zeros((ncat, nj, ni))   # snow volume on i-th category
         hin   = np.zeros((ncat, nj, ni))   # ice thickness of i-th category, [m]
         hsn   = np.zeros((ncat, nj, ni))   # snow thickness of i-th category, [m]
+        ridged_fraction = np.zeros((nj, ni))
 
         t_snoice = np.zeros((nj, ni))         # Snow-ice interface temperature
         t_ice_top = np.zeros((nj, ni))       # Temperature at ice top
@@ -623,7 +624,8 @@ def main():
         aicen = nc.variables['aicen'][0, :, :, :]     # !CAUTION!! off-set exist, fice.shape = (454, 696)
         hin   = nc.variables['siitdthick'][0, :, :, :]
         hsn   = nc.variables['siitdsnthick'][0, :, :, :]
-        nc.close()
+        ridged_fraction = nc.variables['ardg'][0, :, :]
+        #nc.close()
         #breakpoint()
  
         for j in range(nj):
@@ -643,9 +645,10 @@ def main():
                         
                             #vlvl[nnc, j, i] = rep_thick_1[month_id, nnc] * alvl[nnc, j, i]
 
-                            alvl[nnc, j, i] = 1.0 * aicen[nnc, j, i]   #I am assuming all ice is level, since in NorESM output there are no category-resolved variables for ice conentration and thickness
+                            alvl[nnc, j, i] = (1.0 - ridged_fraction[j, i]) * aicen[nnc, j, i]   # I am assuming that all categories have the same fractions of level and ridged ice, 
+                                                                                                 # since in NorESM output there are no category-resolved variables for ice ridged or level fractions
 
-                            vlvl[nnc, j, i] = vicen[nnc, j ,i] * alvl[nnc, j, i]
+                            vlvl[nnc, j, i] = vicen[nnc, j ,i] * (1.0 - ridged_fraction[j, i])
 
                             # define snow temperature at the middle snow layer ----
                             # NOTE: modification is necessary when more than 1 snow layer is used
@@ -703,19 +706,13 @@ def main():
                                 else:                                 # FYI
                                     s_ice[nnc, k, j, i] = 19.539 * z**2 - 19.93 * z + 8.913
                             
-        breakpoint()        
-        # (7) read TOPAZ variables defined on UV-grid ---
+        #breakpoint()        
         
-        nc2 = netCDF4.Dataset(outfile, 'r')
-        
-        nctime2 = nc2.variables['time'][:]
-        t_cal2 = nc2.variables['time'].calendar
-        t_unit2 = nc2.variables['time'].units
 
-        uice = nc2.variables['uice'][0, :, :]     # !CAUTION!! off-set exist, fice.shape = (454, 696)
-        vice = nc2.variables['vice'][0, :, :]     # !CAUTION!! off-set exist, hice.shape = (454, 696)
-        uice_missing_value = nc2.variables['uice'].missing_value
-        vice_missing_value = nc2.variables['vice'].missing_value
+        uice = nc.variables['siu'][:, :]     # !CAUTION!! off-set exist, fice.shape = (454, 696)
+        vice = nc.variables['siv'][:, :]     # !CAUTION!! off-set exist, hice.shape = (454, 696)
+        uice_missing_value = nc.variables['siu']._FillValue
+        vice_missing_value = nc.variables['siv']._FillValue
         
         nj_uv = uice.shape[0]  # nj = 454 for A4_S4K setup
         ni_uv = uice.shape[1]  # ni = 696 for A4_S4K setup
@@ -725,14 +722,15 @@ def main():
         if nj_uv != nj or ni_uv != ni:
             sys.exit('Inconsistency found between T and UV cells')
         
-        tstamp_uv = netCDF4.num2date(nctime2, units = t_unit2, calendar = t_cal2)[0]
+        tstamp_uv = netCDF4.num2date(nctime, units = t_unit, calendar = t_cal)[0]
         #print('infile =', infile)
         #print('tstamp =', tstamp)
         #print('uice.shape =', uice.shape)
         #print('vice.shape =', vice.shape)
         
-        nc2.close()                            
+        nc.close()                            
 
+        breakpoint()
         #=========================================================================================
         #
         # prepare netcdf output when processing the first day of the year
@@ -1002,18 +1000,6 @@ def main():
             t2m_now = np.where(t2m_now < -1.0e-5, t2m_now, -1.0e-5) # don't provide postive temp. at ice surf.
             Tsfc[ndate, n, :, :] = t2m_now[:, :]
 
-        # check 2 --- [OK]
-        #
-        #for n in range(ncat):
-        #    for j in range(nj):
-        #        for i in range(ni):
-        #            if aicen_d[ndate, 0, j, i] > 0.0 and vicen_d[ndate, 0, j, i] == 0:
-        #                print('(i, j) = (', i, ', ', j, ')' , ' n =', n, 
-        #                      ': aicen_d =', aicen_d[ndate, n, j, i], 
-        #                      ', vicen_d =', vicen_d[ndate, n, j, i])
-        #
-        #print('no data matched!!')
-        #sys.exit()
 
         iage[ndate, :, :] = fy_age[:, :]
         apondn[ndate, :, :, :] = 0.0
@@ -1022,46 +1008,8 @@ def main():
         fbrine[ndate, :, :, :] = 0.0
         hbrine[ndate, :, :, :] = 0.0
 
-        # See Physical Oceanography Note (117) p118 for vector rotation  ---
-        #
-        # rot_uice : x-component of ice velocity vector on CICE grid
-        # rot_vice : y-component of ice velocity vector on CICE grid
-        
-        rot_uice = uice[:, :] * np.cos(angles_east_to_x[:, :]) \
-                   + vice[:, :] * np.sin(angles_east_to_x[:, :])
-        rot_vice = uice[:, :] * np.sin(-angles_east_to_x[:, :]) \
-                   + vice[:, :] * np.cos(angles_east_to_x[:, :])
-
-        # follwing missing value definition is not necessary, since a rotation of missing_value 
-        # exactly matches with a missing_value
-        #
-        # NOTE: missing_value seems to cause problem when uvel and vvel are read by CICE.
-        #
-        # by Hiroshi Sumata / 2022.11.28
-
-        for j in range(nj_uv):
-            for i in range(ni_uv):
-
-                # Following if statmement is implemented to exclude missing value
-                #
-                # by Hiroshi Sumata / 2022.11.28
-
-                if abs(rot_uice[j, i]) < 10.0 and abs(rot_vice[j, i] < 10.0):
-                    pass
-                else:
-                    rot_uice[j, i] = 0.0
-                    rot_vice[j, i] = 0.0
-                    
-                if abs(rot_uice[j, i]) > 10.0 or abs(rot_vice[j, i] > 10.0):
-                    print('!!! warning !!!')
-                    print('    Unrealistic uice and/or vice found!')
-                    print('    [i, j]     =', i, ',', j)
-                    print('    rot_uice   =', rot_uice[j, i])
-                    print('    rot_vice   =', rot_vice[j, i])
-                    sys.exit()
-        
-        uvel[ndate, :, :] = rot_uice[:, :]
-        vvel[ndate, :, :] = rot_vice[:, :]
+        uvel[ndate, :, :] = uice[:, :]
+        vvel[ndate, :, :] = vice[:, :]
 
     nc_out.close()
 
