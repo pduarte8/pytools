@@ -129,194 +129,14 @@ def main():
     angles_units = nc_coord_angle.variables['ANGLE'].units
     nc_coord_angle.close()
 
-    #============================================================================================ 
-    # Read seasonal cycle of ice thickcness distribution (ITD) and level ice fraction
-    #============================================================================================
-    #
-    # Following input data are produced by 81_update_PDF/fig_ITD_seasonal_cycle_for_BC.py
-    #
-    # ITD_period_1.pkl : ice thickness distribution & level ice fraction for period 1, 1990-2006
-    # ITD_period_2.pkl : ice thickness distribution & level ice fraction for period 2, 2007-2019
-    #
-    # Data contained in the pkl files:
-    #
-    # xbin[i]: np.array of the center of ice thickness distribution bin [m]
-    #       NOTE: binning interval is 0.1 m in sea ice draft, i.e., binning thickness interval
-    #             is 0.1 * factor(= 1.136) [m]. Note that xbin is neither lower nor upper bound
-    #             of each bin, but the center of the binning interval.
-    #
-    # yfits_1_normalized[month_id, i] : 2D np.array of ice thickness distribution for period 1.
-    #       NOTE: this is normalized distribution, i.e., np.nansum(yfits_1_normalized[m, :]) = 1
-    #
-    # level_ice1_mon[month_id, i] : np.ndarray of level ice fraction in month_id
-    #       NOTE: total fraction of level ice is given by "level_ice_fraction = 0.3", the
-    #             selection of this number comes from Rabenstein et al. (2010, JGR) 0.095-0.205, 
-    #             von Albedyll et al.(2021, TC) 0.14-0.27, and personal communiction, D. Divine
-    #             (2023, slide "CICE_experiment_ITD.odg, page 12).
-
-    with open("/cluster/shared/arcticfjord/hs/A4_S4K/prog_fram/008_CICE_boundary_condition_ITD_2014/ITD_period_1.pkl", 'rb') as f:
-        xbin, yfits_1_normalized, level_ice1 = pickle.load(f)
-
-    with open("/cluster/shared/arcticfjord/hs/A4_S4K/prog_fram/008_CICE_boundary_condition_ITD_2014/ITD_period_2.pkl", 'rb') as f:
-        xbin, yfits_2_normalized, level_ice2 = pickle.load(f)        
-
-    ## check array size --- [OK]
-    #
-    #print('xbin.shape               =', xbin.shape)
-    #print('yfits_1_normalized.shape =', yfits_1_normalized.shape)
-    #print('level_ice1.shape         =', level_ice1.shape)
-
-    #============================================================================================     
-    # calculate fraction of ice in each ice category 
-    #============================================================================================
-    
-    print('Ice thickness distribution for period 1 ========================')
-    
-    total_frac_1 = np.zeros((12, ncat))
-    level_frac_1 = np.zeros((12, ncat))
-
-    for month_id in range(12):
-        for nnc in range(ncat):
-            for (i, x) in enumerate(xbin):
-                if cat_lb[nnc] < x <= cat_ub[nnc]:
-                    total_frac_1[month_id, nnc] += yfits_1_normalized[month_id, i]
-                    level_frac_1[month_id, nnc] += level_ice1[month_id, i]
-
-        # check fraction of ice in each category --- [OK]
-
-        print('--------------')
-        print('month_id =', month_id)
-        
-        for nnc in range(ncat):
-            print('total_farc_1[month_id,', nnc, '] =',
-                  np.round(total_frac_1[month_id, nnc], decimals = 2))
-        print('np.sum(total_frac_1[month_id, :]) =',
-              np.round(np.sum(total_frac_1[month_id, :]), decimals = 2))
-
-        for nnc in range(ncat):
-            print('level_frac_1[month_id,', nnc, '] =',
-                  np.round(level_frac_1[month_id, nnc], decimals = 2))
-        print('np.sum(level_frac_1[month_id, :) =',
-              np.round(np.sum(level_frac_1[month_id, :]), decimals = 2))
-
-    print('Ice thickness distribution for period 2 ========================')    
-    
-    total_frac_2 = np.zeros((12, ncat))
-    level_frac_2 = np.zeros((12, ncat))
-
-    for month_id in range(12):
-        for nnc in range(ncat):
-            for (i, x) in enumerate(xbin):
-                if cat_lb[nnc] < x <= cat_ub[nnc]:
-                    total_frac_2[month_id, nnc] += yfits_2_normalized[month_id, i]
-                    level_frac_2[month_id, nnc] += level_ice2[month_id, i]
-
-        # check fraction of ice in each category --- [OK]
-
-        print('--------------')
-        print('month_id =', month_id)
-        
-        for nnc in range(ncat):
-            print('total_farc_2[month_id,', nnc, '] =',
-                  np.round(total_frac_2[month_id, nnc], decimals = 2))
-        print('np.sum(total_frac_2[month_id, :]) =',
-              np.round(np.sum(total_frac_2[month_id, :]), decimals = 2))
-
-        for nnc in range(ncat):
-            print('level_frac_2[month_id,', nnc, '] =',
-                  np.round(level_frac_2[month_id, nnc], decimals = 2))
-        print('np.sum(level_frac_2[month_id, :) =',
-              np.round(np.sum(level_frac_2[month_id, :]), decimals = 2))                    
-
-    #============================================================================================
-    # Calculate representative ice thickness in each category
-    #============================================================================================
-    # xbin[i]: np.array of the center of ice thickness distribution bin [m]
-    #       NOTE: binning interval is 0.1 m in sea ice draft, i.e., binning thickness interval
-    #             is 0.1 * factor(= 1.136) [m]. Note that xbin is neither lower nor upper bound
-    #             of each bin, but the center of the binning interval.
-    #
-    # yfits_1_normalized[month_id, i] : 2D np.array of ice thickness distribution for period 1.
-    #       NOTE: this is normalized distribution, i.e., np.nansum(yfits_1_normalized[m, :]) = 1
-    #
-    # level_ice1_mon[month_id, i] : np.ndarray of level ice fraction in month_id
-    #       NOTE: total fraction of level ice is given by "level_ice_fraction = 0.3", the
-    #             selection of this number comes from Rabenstein et al. (2010, JGR) 0.095-0.205, 
-    #             von Albedyll et al.(2021, TC) 0.14-0.27, and personal communiction, D. Divine
-    #             (2023, slide "CICE_experiment_ITD.odg, page 12).
-    #
-    # See Physical Oceanography Note (118) p125 for description.
-
-    # define ITD binning indices at the category boundaries ---
-
-    istart = np.ndarray((ncat), dtype = np.int64)   # lower bound of ITD binning index 
-    iend   = np.ndarray((ncat), dtype = np.int64)   # upper bound of ITD binning index 
-    
-    for nnc in range(ncat):
-        indices = []
-        for (i, x) in enumerate(xbin):
-            if cat_lb[nnc] < x <= cat_ub[nnc]:
-                indices.append(i)
-        istart[nnc] = min(indices)
-        iend[nnc]   = max(indices)
-
-    # check --- [OK]
-    #print('check upper and lower bound indices of each category ----')
-    #for nnc in range(ncat):
-    #    print('nnc =', nnc, ',  istart =', istart[nnc], ',  iend =', iend[nnc])
-    
-    # calculate representative ice thickness in each category ----
-
-    rep_thick_1 = np.zeros((12, ncat))   # representative ice thickness in each category [m]
-    
-    for month_id in range(12):
-        for nnc in range(ncat):
-            thick_sum = 0.0
-            for i in range(istart[nnc], iend[nnc] + 1):
-                thick_sum += xbin[i] * yfits_1_normalized[month_id, i]
-            rep_thick_1[month_id, nnc] = thick_sum \
-                                         / np.sum(yfits_1_normalized[month_id, istart[nnc]:iend[nnc] + 1])
-            
-        ## check ---- [OK]
-        #print('month_id =', month_id, ', rep_thick_1 =', rep_thick_1[month_id, :])
-
-    ## consistency check ---- [OK]
-    ## this routine check if the weighted sum of all categories matches with the weighed sum of ITD,
-    ## and in addition, compares it with mean ice thickness given by fig_ITD_seasonal_cycle_for_BC.py
-    #
-    for month_id in range(12):
-        print('rep*frac                =',
-              np.sum(rep_thick_1[month_id, :] * total_frac_1[month_id, :]))
-        print('xbin*yfits_1_normalized =',
-              np.sum(xbin[:] * yfits_1_normalized[month_id, :]))
-    #
-        
-    rep_thick_2 = np.zeros((12, ncat))   # representative ice thickness in each category
-    
-    for month_id in range(12):
-        for nnc in range(ncat):
-            thick_sum = 0.0
-            for i in range(istart[nnc], iend[nnc] + 1):
-                thick_sum += xbin[i] * yfits_2_normalized[month_id, i]
-            rep_thick_2[month_id, nnc] = thick_sum \
-                                         / np.sum(yfits_2_normalized[month_id, istart[nnc]:iend[nnc] + 1])
-
-    ## consistency check ---- [OK]
-    #
-    #for month_id in range(12):
-    #    print('rep*frac                =',
-    #          np.sum(rep_thick_2[month_id, :] * total_frac_2[month_id, :]))
-    #    print('xbin*yfits_2_normalized =',
-    #          np.sum(xbin[:] * yfits_2_normalized[month_id, :]))
-
-    #============================================================================================
+    #===========================================================================================
     # Time loop ---
     #============================================================================================
     # =========================================================
     # USER SETTINGS (UNCHANGED)
     # =========================================================
 
-    scalars_2D = ["hi","ardg","sirdgthick","sitempsnic","sitemptop","sitempbot","siage"]
+    scalars_2D = ["aice","hi","ardg","sirdgthick","sitempsnic","sitemptop","sitempbot","siage"]
     scalars_per_cat = ["aicen","siitdthick","siitdsnthick"]
     vectors_to_keep  = ["siu","siv"]
     scalars_2D_atm =["TS"]
@@ -691,21 +511,19 @@ def main():
         t_cal = nc.variables['time'].calendar
         t_unit = nc.variables['time'].units
 
-        aicen = nc.variables['aicen'][0, :, :, :]     # !CAUTION!! off-set exist, fice.shape = (454, 696)
-        vicen = nc.variables['siitdthick'][0, : , :, :]     # !CAUTION!! off-set exist, hice.shape = (454, 696)
-        vsnon = nc.variables['siitdsnthick'][0, :, :, :]   # !CAUTION!! off-set exist, hsnow.shape = (454, 696)  
-        fy_age = nc.variables['siage'][0, :, :] # !CAUTION!! off-set exist, fy_age.shape = (454, 696)  
-        #hice_missing_value = nc.variables['hice'].missing_value
-
-        nj = aicen.shape[1]  # nj = 454 for A4_S4K setup
-        ni = aicen.shape[2]  # ni = 696 for A4_S4K setup
+        aice = nc.variables['aice'][0, :, :]
+        hi   = nc.variables['hi'][0, :, :] 
+        iceage = nc.variables['siage'][0, :, :] 
+    
+        nj = aice.shape[0]  # nj = 454 for A4_S4K setup
+        ni = aice.shape[1]  # ni = 696 for A4_S4K setup
         print('nj =', nj)
         print('ni =', ni)
 
         tstamp = netCDF4.num2date(nctime, units = t_unit, calendar = t_cal)[0]
         print('infile =', infile)
         print('tstamp =', tstamp)
-        nc.close()
+        #nc.close()
         #breakpoint()
         nc_t2m = netCDF4.Dataset(out_atm, 'r')
         t2m = nc_t2m.variables['TS'][:]                  # t2m.shape = (365, 454, 696), "Surface temperature (radiative)" ;
@@ -726,8 +544,10 @@ def main():
         #        break
                 
         #print('@1: index =', index, ', t2m_stamps[n] =', t2m_tstamps[n])        
-        t2m_now = t2m[0, :, :]                         # unit [deg.C]
-        breakpoint()
+        t2m_now = t2m[0, :, :]   # unit [deg.C]
+
+        #breakpoint()
+
         ## check ----- [OK]    
         #print('t2m_tstamps[index] =', t2m_tstamps[index])
         #print('------------------------------------')
@@ -746,7 +566,7 @@ def main():
             print('          fice.shape =', fice.shape)
             print('          t2m.shape  =', t2m.shape) 
             sys.exit()
-        breakpoint() 
+        #breakpoint() 
         # (5) make boundary condition for CICE ----
 
         # (5.1) ice category classification ----
@@ -783,6 +603,14 @@ def main():
         aicen = np.zeros((ncat, nj, ni))   # sea ice conc. of i-th category
         vicen = np.zeros((ncat, nj, ni))   # sea ice volume of i-th category, [m]
         vsnon = np.zeros((ncat, nj, ni))   # snow volume on i-th category
+        hin   = np.zeros((ncat, nj, ni))   # ice thickness of i-th category, [m]
+        hsn   = np.zeros((ncat, nj, ni))   # snow thickness of i-th category, [m]
+
+        t_snoice = np.zeros((nj, ni))         # Snow-ice interface temperature
+        t_ice_top = np.zeros((nj, ni))       # Temperature at ice top
+        t_ice_bot = np.zeros((nj, ni))       # Temperature at ice bottom
+
+
         t_ice = np.zeros((ncat, nice_layer, nj, ni))  # sea ice temperature in n-th layer, i-th category
         s_ice = np.zeros((ncat, nice_layer, nj, ni))  # sea ice salinity in n-th layer, i-th category
         tsnow = np.zeros((ncat, nsnow_layer, nj, ni)) # snow temperature in m-th layer, i-th category
@@ -791,115 +619,91 @@ def main():
         vlvl = np.zeros((ncat, nj, ni))               # volume fraction of level ice in each category
 
         # (5.3) define values of each variables ---
-        
+
+        aicen = nc.variables['aicen'][0, :, :, :]     # !CAUTION!! off-set exist, fice.shape = (454, 696)
+        hin   = nc.variables['siitdthick'][0, :, :, :]
+        hsn   = nc.variables['siitdsnthick'][0, :, :, :]
+        nc.close()
+        #breakpoint()
+ 
         for j in range(nj):
             for i in range(ni):
                 
-                if fice[j, i] > 0.01 and hice[j, i] > 0.01: # existence of ice follows NorESM simulation
-                    
+                if aice[j, i] > 0.01 and hi[j, i] > 0.01: # existence of ice follows NorESM simulation
+                    iage = iceage[j ,i] / (3600.0 * 24.0 * 365.0) #Converting ice age from seconds to years
+
                     for nnc in range(ncat):
 
-                        # Implement ITD-based boundary condition ----
-                        #
-                        # total_frac_1[month_id, nnc]
-                        #     total fraction of sea ice in nnc-th category in month_id for period 1.
-                        #     This should be given by analysis of
-                        #     "fig_PDF_seasonal_cycle_lognormal_fitting_summary_4_normalized_
-                        #     with_level_ice3.py". --> "fig_ITD_seasonal_cycle_for_BC.py"
-                        #
-                        # level_frac_1[month_id, nnc]
-                        #     fraction of level icce in nnc-th category in month_id for period 1, 
-                        #     defined by the same program described above.
-                        #
-                        # by Hiroshi Sumata / 2023.03.07
+                        if aicen[nnc, j, i] > 0.01 and hin[nnc, j, i] > 0.01:
+
+                            vicen[nnc, j, i] = hin[nnc, j, i] * aicen[nnc, j ,i]
+                            vsnon[nnc, j, i] = hsn[nnc, j, i] * aicen[nnc, j ,i]
+
+                            #alvl[nnc, j, i] = level_frac_1[month_id, nnc] * fice[j, i]
                         
-                        month_id = int(date.month) - 1   
-                        aicen[nnc, j, i] = total_frac_1[month_id, nnc] * fice[j, i]
+                            #vlvl[nnc, j, i] = rep_thick_1[month_id, nnc] * alvl[nnc, j, i]
 
-                        # IMPORTANT NOTE
-                        #
-                        # vicen[nnc, j, i] gives ice thickness of nnc-th category, when all ice in
-                        # this category is equally distributed in the cell, i.e., this gives
-                        # effective thickness of this category in the cell.
-                        # See CICE_experiments.odp slide No. 2 & 3 for description.
-                        #
-                        # by Hiroshi Sumata / 2023.03.07
+                            alvl[nnc, j, i] = 1.0 * aicen[nnc, j, i]   #I am assuming all ice is level, since in NorESM output there are no category-resolved variables for ice conentration and thickness
+
+                            vlvl[nnc, j, i] = vicen[nnc, j ,i] * alvl[nnc, j, i]
+
+                            # define snow temperature at the middle snow layer ----
+                            # NOTE: modification is necessary when more than 1 snow layer is used
+                            #
+                            # t2m_now[j, i] : 2m air temperature
+                            # tfp           : freezng point of seawater [deg.C]
+                            # t2m0          : atmospheric temperature if it is lower than freezing temp.
+                            # t_grad        : temperature gradient in (ice + snow) layer, (z inceases downward)
+                            #                 See Physical Oceanography Note (117) p66.
+                            #
+                            # NOTE:
+                            # In the following calculations, snow and ice thickness should be given by actual 
+                            # thickness of each, not by the thickness per unit area (e.g., vicen) but the thickness 
+                            # normalized by the area actually covered with sea ice (e.g. vicen/aicen). 
+                            # Since siitdthick and siitdsnthick are defined as ice thickness and snow thickness
+                            # in NorESM output files, I suppose they are the same as vicen/aicen and vsnon/aicen
+                            # respectively.
+
+
+                            # Here snow temperature is calculated from the temperature gradient between the atmosphere
+                            # and the snow-ice interface temperature. These calculations are done per category but the results
+                            # should be the same for all categories since the gradient changes according to category thickness
+
+                            t2m0 = np.nanmin([t2m_now[j, i], -1.0e-5])  # keep snow surf. temp negative
+                            t_grad = - (t2m0 - t_snoice[j, i]) / hsn[nnc, j, i]
+                            tsnow[nnc, 0, j, i] = t2m0 + t_grad * (hsn[nnc, j, i] * 0.5)
+
+                            # define temperature inside the ice ----
+                            # ATTENTION: index of the ice layers is numbered from top to bottom, 
+                            #            i.e., the top layer is k = 1 (zero in python indexing) and
+                            #            the bottom layer is k = nice_layer ((nice_layer - 1) in python)
+                            #
+                            # z_ice         : vertical coordinate of temperature point in ice
+                            #                 (zero is at the top of snow)
+                            t_grad = - (t_ice_top[j, i] - t_ice_bot[j, i]) / hin[nnc, j, i]
+                            for k in range(nice_layer):
+                                z_ice = (hin[nnc, j, i] / nice_layer) * (float(k) + 0.5)
+                                t_ice[nnc, k, j, i] = t_ice_top[j, i] + t_grad * z_ice
                         
-                        vicen[nnc, j, i] = rep_thick_1[month_id, nnc] * aicen[nnc, j, i]
-
-                        # IMPORTANT NOTE
-                        #
-                        # The above definition is supposedly true for vsnon.
-                        
-                        vsnon[nnc, j, i] = hsnow[j, i] * aicen[nnc, j, i]
-
-                        # NOTE
-                        #
-                        # level_frac_1[month_id, nnc] is already normalized fraction
-
-                        alvl[nnc, j, i] = level_frac_1[month_id, nnc] * fice[j, i]
-
-                        # vlvl[nnc, j, i] is volume fraction of level ice in nnc-th category in
-                        # unit area. See Note (118) p123-124 for description.
-                        
-                        vlvl[nnc, j, i] = rep_thick_1[month_id, nnc] * alvl[nnc, j, i]
-
-                        # define snow temperature at the middle snow layer ----
-                        # NOTE: modification is necessary when more than 1 snow layer is used
-                        #
-                        # t2m_now[j, i] : 2m air temperature
-                        # tfp           : freezng point of seawater [deg.C]
-                        # t2m0          : atmospheric temperature if it is lower than freezing temp.
-                        # t_grad        : temperature gradient in (ice + snow) layer, (z inceases downward)
-                        #                 See Physical Oceanography Note (117) p66.
-                        #
-                        # NOTE:
-                        # In the following defintion, snow and ice thickness should be given by actual 
-                        # thickness of each, not by the thickness per unit area (e.g., vicen)
-
-                        t2m0 = np.nanmin([t2m_now[j, i], -1.0e-5])  # keep snow surf. temp negative
-                        t_grad = - (t2m0 - tfp) / (hsnow[j, i] + rep_thick_1[month_id, nnc])
-                        tsnow[nnc, 0, j, i] = t2m0 + t_grad * (hsnow[j, i] * 0.5)
-
-                        # define temperature inside the ice ----
-                        # ATTENTION: index of the ice layers is numbered from top to bottom, 
-                        #            i.e., the top layer is k = 1 (zero in python indexing) and
-                        #            the bottom layer is k = nice_layer ((nice_layer - 1) in python)
-                        #
-                        # z_ice         : vertical coordinate of temperature point in ice
-                        #                 (zero is at the top of snow)
-
-                        for k in range(nice_layer):
-                            z_ice = hsnow[j, i] \
-                                    + (rep_thick_1[month_id, nnc] / nice_layer) * (float(k) + 0.5)
-                            t_ice[nnc, k, j, i] = t2m0 + t_grad * z_ice
-                        
-                        # define salinity inside the ice ----
-                        # The vertical profile of salinity in sea ice is given by an empirical equation
-                        # based on Gerland et al. (1999). See relevant description in CRiceS_tips.html
-                        #
-                        for k in range(nice_layer):
+                            # define salinity inside the ice ----
+                            # The vertical profile of salinity in sea ice is given by an empirical equation
+                            # based on Gerland et al. (1999). See relevant description in CRiceS_tips.html
+                            #
+                            for k in range(nice_layer):
                     
-                            z = ((k + 1) - 0.5) / float(nice_layer)  # NOTE indexing starts from zero
-
-                            if rep_thick_1[month_id, nnc] > 1.5:  # multi-year ice
-                                a = 0.407
-                                b = 0.573
-                                s_max = 3.2                       # maximum salinity in the ice
-
-                                theta =  np.pi * z**(a/(z + b))
-                                s_ice[nnc, k, j, i] = 0.5 * s_max * (1.0 - np.cos(theta))
-                            else:                                 # FYI
-                                s_ice[nnc, k, j, i] = 19.539 * z**2 - 19.93 * z + 8.913
+                                z = ((k + 1) - 0.5) / float(nice_layer)  # NOTE indexing starts from zero
                             
-        # (6) regrid TOPAZ ice velocity to the CICE grid ---
+                                if iage > 1.5:  # multi-year ice
+                                    a = 0.407
+                                    b = 0.573
+                                    s_max = 3.2                       # maximum salinity in the ice
 
-        outfile = 'Results/temp_uv.nc'
-        command = 'ls -al ' + infile
-        os.system(command)
-        command = 'cdo remapbil,' + refgrid_u + ' ' + infile + ' ' + outfile
-        os.system(command)
-        
+                                    theta =  np.pi * z**(a/(z + b))
+                                    s_ice[nnc, k, j, i] = 0.5 * s_max * (1.0 - np.cos(theta))
+                                else:                                 # FYI
+                                    s_ice[nnc, k, j, i] = 19.539 * z**2 - 19.93 * z + 8.913
+                            
+        breakpoint()        
         # (7) read TOPAZ variables defined on UV-grid ---
         
         nc2 = netCDF4.Dataset(outfile, 'r')
