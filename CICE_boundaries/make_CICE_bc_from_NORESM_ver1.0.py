@@ -100,7 +100,7 @@ def main():
     #=====================================================================================    
 
     bc_file_name = 'cice_bc_from_NORESM'
-    year = 2020
+    year = 2023
     
     date_start = datetime.datetime(year, 1, 1)
     date_end   = datetime.datetime(year + 1, 1, 1)  # for actual execution  
@@ -111,6 +111,8 @@ def main():
     # Create an array of dates with only year and month using a list comprehension
     dates = [(date_start + relativedelta(months=i)).strftime('%Y-%m') 
          for i in range((date_end.year - date_start.year) * 12 + date_end.month - date_start.month)]
+
+    dates_datetime = [(date_start + relativedelta(months=i)) for i in range((date_end.year - date_start.year) * 12 + date_end.month - date_start.month)]
     # Print the array of dates
     print(dates)
     
@@ -248,7 +250,6 @@ def main():
     # =========================================================
     # LOOP OVER TIME
     # =========================================================
-
     for date_str in dates:
 
         file_name = f"NSSP585frc2_f09_tn14_20191105.cice.h.{date_str}.nc"
@@ -309,9 +310,9 @@ def main():
           print(f"\nProcessing {var} per category")
   
           # Loop over each ice category
-          for ncat in range(ds.sizes['nc']):
-             print(f"  Processing category {ncat} for variable {var}")
-             ds_cat = ds[var].isel(nc=ncat)  # Select data for the current category
+          for ncati in range(ds.sizes['nc']):
+             print(f"  Processing category {ncati} for variable {var}")
+             ds_cat = ds[var].isel(nc=ncati)  # Select data for the current category
              temp_cat = f"Results/temp_cat_{var}.nc"  # Temporary file for the current category
              temp_cat_grid = "Results/temp_cat_grid_var}.nc"  # Temporary file with grid info
              # Remove previous files if they exist
@@ -331,7 +332,7 @@ def main():
              # Load the remapped data and append it to the list
              print(f"Loading remapped data from {temp_cat}")
              ds_remap = xr.open_dataset(temp_cat)
-             ds_remap_with_nc = ds_remap[var].expand_dims({'nc': [ncat]})  # Add the `nc` dimension
+             ds_remap_with_nc = ds_remap[var].expand_dims({'nc': [ncati]})  # Add the `nc` dimension
              cat_arrays.append(ds_remap_with_nc)
              ds_remap.close()
           # Combine all categories into a single variable
@@ -632,7 +633,7 @@ def main():
             for i in range(ni):
                 
                 if aice[j, i] > 0.01 and hi[j, i] > 0.01: # existence of ice follows NorESM simulation
-                    iage = iceage[j ,i] / (3600.0 * 24.0 * 365.0) #Converting ice age from seconds to years
+                    age = iceage[j ,i] / (3600.0 * 24.0 * 365.0) #Converting ice age from seconds to years
 
                     for nnc in range(ncat):
 
@@ -696,7 +697,7 @@ def main():
                     
                                 z = ((k + 1) - 0.5) / float(nice_layer)  # NOTE indexing starts from zero
                             
-                                if iage > 1.5:  # multi-year ice
+                                if age > 1.5:  # multi-year ice
                                     a = 0.407
                                     b = 0.573
                                     s_max = 3.2                       # maximum salinity in the ice
@@ -730,14 +731,14 @@ def main():
         
         nc.close()                            
 
-        breakpoint()
+        #breakpoint()
         #=========================================================================================
         #
         # prepare netcdf output when processing the first day of the year
         #
         #=========================================================================================
                             
-        if date == dates[0]: 
+        if date_str == dates[0]: 
 
             bry_file = bc_file_name + '.' + str(year) + '.nc'
             nc_out = netCDF4.Dataset(bry_file, 'w', format = 'NETCDF4')
@@ -795,7 +796,7 @@ def main():
             time.calendar = "gregorian"
             time.axis = "T"
             
-            time[:] = netCDF4.date2num(dates[:], time.units, calendar = time.calendar)
+            time[:] = netCDF4.date2num(dates_datetime[:], time.units, calendar = time.calendar)
             print('dates[0] =', dates[0], ',  time[0] =', time[0])
 
             Time = nc_out.createVariable('Time', dtype('int16').char, ('TIME')) # int numbers
@@ -962,29 +963,27 @@ def main():
             #
             # NOTE: horizontal dimensions of uvel and vvel are given by eta_t and xi_t, so as to
             #       mimic old BRY_yyyy.nc data, though it should be formally 'eta_u' and 'xi_u'.
-
-            outfile = './temp_uv.nc'
-            nc2 = netCDF4.Dataset(outfile, 'r')        
+            template_file = "Results/temp_uv.nc"
+            nc2 = netCDF4.Dataset(template_file, 'r')        
             nc2.set_auto_mask(False)           # by Hiroshi Sumata / 2022.11.28
             
             uvel = nc_out.createVariable('uvel', dtype('float64').char, ('TIME', 'eta_t', 'xi_t'))
-            uvel.standard_name = nc2.variables['uice'].standard_name
-            uvel.units         = nc2.variables['uice'].units
-            uvel.coordinates   = nc2.variables['uice'].coordinates
-            uvel.missing_value = nc2.variables['uice'].missing_value
-            uvel.cell_methods  = nc2.variables['uice'].cell_methods
+            uvel.standard_name = nc2.variables['siu'].long_name
+            uvel.units         = nc2.variables['siu'].units
+            uvel.coordinates   = nc2.variables['siu'].coordinates
+            uvel.missing_value = nc2.variables['siu'].missing_value
+            uvel.cell_methods  = nc2.variables['siu'].cell_methods
 
             vvel = nc_out.createVariable('vvel', dtype('float64').char, ('TIME', 'eta_t', 'xi_t'))
-            vvel.standard_name = nc2.variables['vice'].standard_name
-            vvel.units         = nc2.variables['vice'].units
-            vvel.coordinates   = nc2.variables['vice'].coordinates
-            vvel.missing_value = nc2.variables['vice'].missing_value
-            vvel.cell_methods  = nc2.variables['vice'].cell_methods            
+            vvel.standard_name = nc2.variables['siv'].long_name
+            vvel.units         = nc2.variables['siv'].units
+            vvel.coordinates   = nc2.variables['siv'].coordinates
+            vvel.missing_value = nc2.variables['siv'].missing_value
+            vvel.cell_methods  = nc2.variables['siv'].cell_methods            
 
-            nc2.close()
-            
+            nc2.close() 
         # write data into netcdf output ----
-
+        ndate = dates.index(date_str)
         Time[ndate] = ndate
                                 
         aicen_d[ndate, :, :, :] = aicen[:, :, :]
@@ -1001,7 +1000,7 @@ def main():
             Tsfc[ndate, n, :, :] = t2m_now[:, :]
 
 
-        iage[ndate, :, :] = fy_age[:, :]
+        iage[ndate, :, :] = iceage[:, :]
         apondn[ndate, :, :, :] = 0.0
         hpondn[ndate, :, :, :] = 0.0
         ipondn[ndate, :, :, :] = 0.0        
