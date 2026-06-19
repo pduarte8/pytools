@@ -1,1 +1,1 @@
-The directory CICE_boundaries contains scripts to create CICE boundaries from differet sources. The file make_CICE_bc_from_NORESM_ver0.7_trimming_ITD_1.py is used to use NORESM ice output to produce boundaries for the S4K model.
+The directory CICE_boundaries contains scripts to create CICE boundaries from differet sources. The file make_CICE_bc_from_NORESM_ver1.0.py is used to use NORESM ice output to produce boundaries for the S4K model.
