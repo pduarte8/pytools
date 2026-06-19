@@ -100,7 +100,7 @@ def main():
     #=====================================================================================    
 
     bc_file_name = 'cice_bc_from_NORESM'
-    year = 2023
+    year = 2026
     
     date_start = datetime.datetime(year, 1, 1)
     date_end   = datetime.datetime(year + 1, 1, 1)  # for actual execution  
@@ -145,8 +145,8 @@ def main():
 
     fill_value = -9999  # fill value for land / masked points
 
-    source_grid = "Results/source_grid.txt"
-    target_grid = "Results/target_grid.txt"
+    source_grid = "source_grid.txt"
+    target_grid = "target_grid.txt"
 
     # =========================================================
     # FUNCTION: CREATE CLEAN CICE GRID FILE
@@ -264,8 +264,8 @@ def main():
 
         ds_2d = ds[scalars_2D]
 
-        tempfile_2d = "Results/temp_2d.nc"
-        temp_with_grid = "Results/temp_2d_withgrid.nc"
+        tempfile_2d = "temp_2d.nc"
+        temp_with_grid = "temp_2d_withgrid.nc"
 
         # Remove previous files if they exist
         for f in [tempfile_2d, temp_with_grid]:
@@ -277,7 +277,7 @@ def main():
 
         run_cdo(f"cdo setgrid,{source_grid} {tempfile_2d} {temp_with_grid}")
 
-        outfile_2d = f"Results/out_2d.nc"
+        outfile_2d = f"out_2d.nc"
         if os.path.exists(outfile_2d):
             os.remove(outfile_2d)
 
@@ -313,8 +313,8 @@ def main():
           for ncati in range(ds.sizes['nc']):
              print(f"  Processing category {ncati} for variable {var}")
              ds_cat = ds[var].isel(nc=ncati)  # Select data for the current category
-             temp_cat = f"Results/temp_cat_{var}.nc"  # Temporary file for the current category
-             temp_cat_grid = "Results/temp_cat_grid_var}.nc"  # Temporary file with grid info
+             temp_cat = f"temp_cat_{var}.nc"  # Temporary file for the current category
+             temp_cat_grid = "temp_cat_grid_var}.nc"  # Temporary file with grid info
              # Remove previous files if they exist
              for f in [temp_cat, temp_cat_grid]:
                 if os.path.exists(f):
@@ -347,7 +347,7 @@ def main():
         print("\nVariables in ds_out after processing scalars_per_cat:")
         print(list(ds_out.data_vars)) 
         # Write the combined dataset to a single NetCDF file
-        output_file = "Results/temp_scalars_per_cat.nc"
+        output_file = "temp_scalars_per_cat.nc"
         print(f"\nWriting all category variables to {output_file}")
         ds_out.to_netcdf(output_file)
         print(f"✔ All category variables written to {output_file}")
@@ -356,7 +356,7 @@ def main():
         # STEP 3 — velocities
         # =======================
         angle = ds["ANGLE"].values
-        vel_source_grid = "Results/source_grid_vel.txt"
+        vel_source_grid = "source_grid_vel.txt"
         create_cice_velocity_gridfile(first_file, vel_source_grid)
          
         ds_angle_t = xr.open_dataset(refgrid_angle)
@@ -376,8 +376,8 @@ def main():
                 "ANGLE": ds["ANGLE"]
             })
 
-            temp_uv = "Results/temp_uv.nc"
-            temp_uv_withgrid = "Results/temp_uv_withgrid.nc"
+            temp_uv = "temp_uv.nc"
+            temp_uv_withgrid = "temp_uv_withgrid.nc"
 
             for f in [temp_uv, temp_uv_withgrid]:
                 if os.path.exists(f):
@@ -436,7 +436,7 @@ def main():
             ds_out[var].values = data
 
         encoding = {var: {'_FillValue': fill_value} for var in ds_out.data_vars}
-        outfile = f"Results/out_all_{date_str}.nc"
+        outfile = f"out_all_{date_str}.nc"
         # Fix time encoding issues
         if "time" in ds_out:
             ds_out["time"].attrs.pop("units", None)
@@ -450,14 +450,14 @@ def main():
         # STEP 5 — Combine all results into a single file
         # =========================================================
         # Paths to the intermediate files
-        outfile_2d = "Results/out_2d.nc"
+        outfile_2d = "out_2d.nc"
         # Load the 2D variables and category variables
         ds_2d = xr.open_dataset(outfile_2d)
         ds_all = xr.open_dataset(outfile)
         # Merge the datasets
         combined_ds = xr.merge([ds_2d, ds_all])
         # Define the output file name for the combined dataset
-        combined_outfile = f"Results/combined_{date_str}.nc"
+        combined_outfile = f"combined_{date_str}.nc"
         # Write the combined dataset to a single NetCDF file
         print(f"\nWriting combined dataset to {combined_outfile}")
         combined_ds.to_netcdf(combined_outfile, mode="w")
@@ -475,8 +475,8 @@ def main():
         # =========================================================
         infile_atm = f"{dir_NORESM_atm}NSSP585frc2_f09_tn14_20191105.cam.h0.{date_str}.nc"
         print('infile_atm = ',infile_atm)
-        temp_atm = "Results/temp_atm.nc"
-        temp_atm_withgrid = "Results/temp_atm_withgrid.nc"
+        temp_atm = "temp_atm.nc"
+        temp_atm_withgrid = "temp_atm_withgrid.nc"
 
         ds = xr.open_dataset(infile_atm)
 
@@ -491,7 +491,7 @@ def main():
 
         run_cdo(f"cdo setgrid,{source_grid} {temp_atm} {temp_atm_withgrid}")
 
-        out_atm = f"Results/out_atm.nc"
+        out_atm = f"out_atm.nc"
         if os.path.exists(outfile_2d):
             os.remove(out_atm)
         
@@ -963,7 +963,7 @@ def main():
             #
             # NOTE: horizontal dimensions of uvel and vvel are given by eta_t and xi_t, so as to
             #       mimic old BRY_yyyy.nc data, though it should be formally 'eta_u' and 'xi_u'.
-            template_file = "Results/temp_uv.nc"
+            template_file = "temp_uv.nc"
             nc2 = netCDF4.Dataset(template_file, 'r')        
             nc2.set_auto_mask(False)           # by Hiroshi Sumata / 2022.11.28
             
