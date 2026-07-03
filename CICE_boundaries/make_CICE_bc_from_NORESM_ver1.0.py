@@ -100,7 +100,7 @@ def main():
     #=====================================================================================    
 
     bc_file_name = 'cice_bc_from_NORESM'
-    year = 2026
+    year = 2023
     
     date_start = datetime.datetime(year, 1, 1)
     date_end   = datetime.datetime(year + 1, 1, 1)  # for actual execution  
