@@ -4,7 +4,7 @@ import glob
 import sys
 import subprocess
 import pickle
-
+import scipy
 import numpy as np
 import netCDF4
 import datetime
@@ -12,7 +12,7 @@ import xarray as xr
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from numpy import dtype
-
+from scipy.ndimage import distance_transform_edt
 # -----------------------
 # Helper functions
 # -----------------------
@@ -70,6 +70,29 @@ def create_cice_velocity_gridfile(ncfile, gridfile):
     ds.close()
     print(f"✔ Velocity grid file written: {gridfile}")
 
+def nearest_fill_2d(field, ocean_mask):
+    """
+    Fill NaNs in ocean points using nearest valid ocean values.
+    Land is untouched.
+    """
+
+    field = field.copy()
+
+    # valid ocean points
+    valid = ocean_mask & np.isfinite(field)
+
+    # nothing to fill
+    if np.all(valid):
+        return field
+
+    # distance transform: find nearest valid cell
+    _, indices = distance_transform_edt(~valid, return_indices=True)
+
+    missing = ocean_mask & ~np.isfinite(field)
+
+    field[missing] = field[indices[0][missing], indices[1][missing]]
+
+    return field
 # -----------------------
 # Main processing
 # -----------------------
@@ -139,6 +162,7 @@ def main():
     angle_t = np.squeeze(ds_angle_t["ANGLE"].values)
     ds_angle_t.close()
     nc_ref = netCDF4.Dataset(refgrid_t, 'r')
+    tmask = nc_ref.variables["tmask"][:]
     try:
         TLAT_ref = nc_ref.variables['TLAT'][:]
         nj, ni = TLAT_ref.shape
@@ -150,7 +174,7 @@ def main():
     # -----------------------
     monthly_times = []
     store = {}
-    keys_4d = ['aicen','vicen','vsnon','alvl','vlvl','Tsfc']          # (time, ncat, eta_t, xi_t)
+    keys_4d = ['aicen','vicen','vsnon','alvln','vlvln','Tsfc']          # (time, ncat, eta_t, xi_t)
     keys_5d = ['Tinz','Sinz','Tsnz']                                 # (time, ncat, nkice, eta_t, xi_t)
     keys_3d = ['iage']                                               # (time, eta_t, xi_t)
     keys_2d = ['uvel','vvel']                                        # (time, eta_t, xi_t)
@@ -252,14 +276,23 @@ def main():
         # replace NaNs with fill_value
         for var in combined_ds.data_vars:
             data = combined_ds[var].values
-            mask = np.isnan(data) | (data > 1e20)
-            data[mask] = fill_value
+            #mask = np.isnan(data) | (data > 1e20)
+            #data[mask] = fill_value
+            # keep NaN as NaN
+            fill = combined_ds[var].attrs.get('_FillValue', None)
+            if fill is not None:
+                data[data == fill] = np.nan
+            # also catch extreme garbage values safely
+            data[data > 1e20] = np.nan
+            data[data < -1e20] = np.nan    
             combined_ds[var].values = data
+
         combined_outfile = f"combined_{date_str}.nc"
         combined_ds.to_netcdf(combined_outfile, mode="w")
         ds_out_2d.close()
         combined_ds.close()
 
+        ocean_mask = tmask > 0
         # ----- STEP 5: atmosphere remap (2D atm->out_atm) -----
         infile_atm = os.path.join(dir_NORESM_atm, fname_atm_pattern.format(date=date_str))
         if not os.path.exists(infile_atm):
@@ -309,10 +342,44 @@ def main():
         t2m_now = t2m[0, :, :]
         nc_t2m.close()
         # read category variables
+        aicen_arr = np.zeros((ncat, nj, ni))   # sea ice conc. of i-th category
+        hin   = np.zeros((ncat, nj, ni))   # ice thickness of i-th category, [m]
+        hsn   = np.zeros((ncat, nj, ni))   # snow thickness of i-th category, [m]
+        ridged_fraction = np.zeros((nj, ni))
+
         aicen_arr = nc.variables['aicen'][0, :, :, :]     # (nc, nj, ni)
+
+        print("aicen:", np.nanmin(aicen_arr), np.nanmax(aicen_arr))
+        print("Number of values > 1:", np.sum(aicen_arr > 1))
+        print("Number of values < 0:", np.sum(aicen_arr < 0))
+        
         hin_arr = nc.variables['siitdthick'][0, :, :, :]
         hsn_arr = nc.variables['siitdsnthick'][0, :, :, :]
         ridged_fraction = nc.variables['ardg'][0, :, :]
+
+        # convert fill values → NaN (if not already done upstream)
+        aicen_arr = np.where(aicen_arr == fill, np.nan, aicen_arr)
+        hin_arr   = np.where(hin_arr == fill, np.nan, hin_arr)
+        hsn_arr   = np.where(hsn_arr == fill, np.nan, hsn_arr)
+        ridged_fraction = np.where(ridged_fraction == fill, np.nan, ridged_fraction)
+
+        # apply physical bounds (only for aicen)
+        aicen_arr[(aicen_arr < 0) | (aicen_arr > 1)] = np.nan
+        hin_arr[hin_arr < 0] = np.nan
+        hsn_arr[hsn_arr < 0] = np.nan
+        ridged_fraction[(ridged_fraction < 0) | (ridged_fraction > 1)] = np.nan
+        
+        for nc in range(ncat):
+
+            aicen_arr[nc] = nearest_fill_2d(aicen_arr[nc], ocean_mask)
+            hin_arr[nc]   = nearest_fill_2d(hin_arr[nc], ocean_mask)
+            hsn_arr[nc]   = nearest_fill_2d(hsn_arr[nc], ocean_mask)
+        total = np.sum(aicen_arr, axis=0)
+        masktot = total > 1.0
+
+        aicen_arr[:, masktot] /= total[masktot]  # This is to make sure that the sum of all categories is <= 1
+        
+        ridged_fraction = nearest_fill_2d(ridged_fraction, ocean_mask)
 
         # initialize arrays to store BC results for this month
         vicen_arr = np.zeros_like(aicen_arr)
@@ -358,15 +425,31 @@ def main():
         # Use u/v arrays we stored into ds_out_combined if present, otherwise fallback to combined file
         try:
             nc_uv = netCDF4.Dataset(f"temp_uv_{date_str}.nc", 'r')
-            uice = nc_uv.variables['siu'][:, :]
-            vice = nc_uv.variables['siv'][:, :]
+            uice = nc_uv.variables['siu'][0,:, :]
+            vice = nc_uv.variables['siv'][0,:, :]
+            u_fill = nc_uv.variables['siu']._FillValue
+            v_fill = nc_uv.variables['siv']._FillValue
+            u_fill = getattr(nc_uv.variables['siu'], '_FillValue', None)
+            v_fill = getattr(nc_uv.variables['siv'], '_FillValue', None)
+            if u_fill is not None:
+                uice = np.where(uice == u_fill, np.nan, uice)
+            if v_fill is not None:
+                vice = np.where(vice == v_fill, np.nan, vice)
+            uice[uice > 1e20] = np.nan
+            vice[vice > 1e20] = np.nan
+            uice[uice < -1e20] = np.nan
+            vice[vice < -1e20] = np.nan
+            uice = nearest_fill_2d(uice, ocean_mask)
+            vice = nearest_fill_2d(vice, ocean_mask)
+            print("uice after nearest neighbour:", np.nanmin(uice), np.nanmax(uice))
+            print("vice after nearest neighbour:", np.nanmin(vice), np.nanmax(vice))
             nc_uv.close()
         except Exception:
             # fallback (should not normally happen)
             uice = np.zeros((nj, ni))
             vice = np.zeros((nj, ni))
 
-        nc.close()
+        #nc.close()
 
         # store arrays for this month
         midpoint_dt = month_midpoint_rounded_midnight(int(date_str.split('-')[0]), int(date_str.split('-')[1]))
@@ -374,8 +457,8 @@ def main():
         store['aicen'].append(aicen_arr.copy())
         store['vicen'].append(vicen_arr.copy())
         store['vsnon'].append(vsnon_arr.copy())
-        store['alvl'].append(alvl_arr.copy())
-        store['vlvl'].append(vlvl_arr.copy())
+        store['alvln'].append(alvl_arr.copy())
+        store['vlvln'].append(vlvl_arr.copy())
         store['Tinz'].append(t_ice.copy())
         store['Sinz'].append(s_ice.copy())
         store['Tsnz'].append(tsnow.copy())
@@ -391,6 +474,9 @@ def main():
         store['ipondn'].append(np.zeros((ncat, nj, ni)))
         store['fbrine'].append(np.zeros((ncat, nj, ni)))
         store['hbrine'].append(np.zeros((ncat, nj, ni)))
+
+        print("uice before storing:", np.nanmin(uice), np.nanmax(uice))
+        print("vice beforestoring:", np.nanmin(vice), np.nanmax(vice))
         store['uvel'].append(uice.copy())
         store['vvel'].append(vice.copy())
 
@@ -457,8 +543,8 @@ def main():
     ds_monthly['aicen'] = (('time','ncat','eta_t','xi_t'), stack_and_order('aicen', 4))
     ds_monthly['vicen'] = (('time','ncat','eta_t','xi_t'), stack_and_order('vicen', 4))
     ds_monthly['vsnon'] = (('time','ncat','eta_t','xi_t'), stack_and_order('vsnon', 4))
-    ds_monthly['alvl']  = (('time','ncat','eta_t','xi_t'), stack_and_order('alvl', 4))
-    ds_monthly['vlvl']  = (('time','ncat','eta_t','xi_t'), stack_and_order('vlvl', 4))
+    ds_monthly['alvln']  = (('time','ncat','eta_t','xi_t'), stack_and_order('alvln', 4))
+    ds_monthly['vlvln']  = (('time','ncat','eta_t','xi_t'), stack_and_order('vlvln', 4))
 
     ds_monthly['Tinz']  = (('time','ncat','nkice','eta_t','xi_t'), stack_and_order('Tinz', 5))
     ds_monthly['Sinz']  = (('time','ncat','nkice','eta_t','xi_t'), stack_and_order('Sinz', 5))
@@ -475,6 +561,7 @@ def main():
 
     ds_monthly['uvel'] = (('time','eta_t','xi_t'), stack_and_order('uvel', 3))
     ds_monthly['vvel'] = (('time','eta_t','xi_t'), stack_and_order('vvel', 3))
+
     # -----------------------
     # Interpolate to daily for the target year
     # -----------------------
@@ -547,13 +634,15 @@ def main():
         v = nc_out.createVariable(name, 'f8', dims, zlib=False)
         v.missing_value = 1.0e-30
         return v
+    print(np.nanmin(ds_daily['aicen'].values),
+      np.nanmax(ds_daily['aicen'].values))
 
     # create variables and write from ds_daily
     create_var('aicen', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['aicen'].values
     create_var('vicen', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['vicen'].values
     create_var('vsnon', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['vsnon'].values
-    create_var('alvln', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['alvl'].values
-    create_var('vlvln', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['vlvl'].values
+    create_var('alvln', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['alvln'].values
+    create_var('vlvln', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['vlvln'].values
     create_var('Tinz', ('TIME','ncat','nkice','eta_t','xi_t'))[:] = ds_daily['Tinz'].values
     create_var('Sinz', ('TIME','ncat','nkice','eta_t','xi_t'))[:] = ds_daily['Sinz'].values
     create_var('Tsnz', ('TIME','ncat','nksnow','eta_t','xi_t'))[:] = ds_daily['Tsnz'].values
@@ -566,8 +655,10 @@ def main():
     create_var('hbrine', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['hbrine'].values
     create_var('uvel', ('TIME','eta_t','xi_t'))[:] = ds_daily['uvel'].values
     create_var('vvel', ('TIME','eta_t','xi_t'))[:] = ds_daily['vvel'].values
+    
 
-    nc_out.close()
+
+    #nc_out.close()
     print("Wrote daily untrimmed BC file:", bry_file)
 
     # -----------------------
@@ -579,7 +670,7 @@ def main():
     nc_trim = netCDF4.Dataset(trimmed_name, 'w', format='NETCDF3_64BIT')
 
     # create dims in trimmed file
-    nc_trim.createDimension('TIME', None)
+    nc_trim.createDimension('time', None)
     nc_trim.createDimension('eta_t', nj)
     nc_trim.createDimension('xi_t', ni)
     nc_trim.createDimension('ncat', ncat)
@@ -587,7 +678,7 @@ def main():
     nc_trim.createDimension('nksnow', nsnow_layer)
 
     # write time var and domain coords (copy from untrimmed)
-    time_t = nc_trim.createVariable('time', 'f8', ('TIME',))
+    time_t = nc_trim.createVariable('time', 'f8', ('time',))
     time_t.units = time_var.units
     time_t.calendar = time_var.calendar
     time_t[:] = time_var[:]
@@ -642,6 +733,7 @@ def main():
         vN[:] = np.asarray(n_data.values)
 
     nc_trim.close()
+    nc_out.close()
     print("Wrote trimmed BC file with oriented variables:", trimmed_name)
 
 if __name__ == "__main__":
