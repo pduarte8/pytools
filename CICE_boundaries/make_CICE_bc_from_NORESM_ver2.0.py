@@ -490,7 +490,7 @@ def main():
         store['Tsnz'].append(tsnow.copy())
         # Tsfc: clipped t2m per category
         Tsfc_cat = np.zeros((ncat, nj, ni))
-        t2m_now_clip = np.where(t2m_now < -1.0e-5, t2m_now, -1.0e-5)
+        t2m_now_clip = np.where(t2m_now > -1.0e-5, t2m_now, -1.0e-5)
         for n in range(ncat):
             Tsfc_cat[n,:,:] = t2m_now_clip
         store['Tsfc'].append(Tsfc_cat)
