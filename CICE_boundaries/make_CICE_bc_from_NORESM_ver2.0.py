@@ -93,6 +93,26 @@ def nearest_fill_2d(field, ocean_mask):
     field[missing] = field[indices[0][missing], indices[1][missing]]
 
     return field
+
+
+fill_value = 1.0e30
+
+def replace_nan_with_fill(data):
+    out = np.array(data, copy=True)
+    out[~np.isfinite(out)] = fill_value
+    return out
+
+def create_var(name, dims):
+    v = nc_out.createVariable(
+        name,
+        'f8',
+        dims,
+        zlib=False,
+        fill_value=fill_value
+    )
+    v.missing_value = fill_value
+    return v
+
 # -----------------------
 # Main processing
 # -----------------------
@@ -110,14 +130,13 @@ def main():
     fname_atm_pattern = "NSSP585frc2_f09_tn14_20191105.cam.h0.{date}.nc"
 
     bc_file_name = 'cice_bc_from_NORESM'
-    year = 2024   # target year to create BC for (one-file-per-year)
+    year = 2023   # target year to create BC for (one-file-per-year)
     # -----------------------
     # Variables and constants (as in your script)
     # -----------------------
     ncat = 5
     nice_layer = 7
     nsnow_layer = 1
-    fill_value = -9999
 
     scalars_2D = ["aice","hi","ardg","sirdgthick","sitempsnic","sitemptop","sitempbot","siage"]
     scalars_per_cat = ["aicen","siitdthick","siitdsnthick"]
@@ -374,13 +393,17 @@ def main():
             aicen_arr[nc] = nearest_fill_2d(aicen_arr[nc], ocean_mask)
             hin_arr[nc]   = nearest_fill_2d(hin_arr[nc], ocean_mask)
             hsn_arr[nc]   = nearest_fill_2d(hsn_arr[nc], ocean_mask)
+            aicen_arr[:, ~ocean_mask] = np.nan
+            hin_arr[:, ~ocean_mask] = np.nan
+            hsn_arr[:, ~ocean_mask] = np.nan
+
         total = np.sum(aicen_arr, axis=0)
         masktot = total > 1.0
 
         aicen_arr[:, masktot] /= total[masktot]  # This is to make sure that the sum of all categories is <= 1
         
         ridged_fraction = nearest_fill_2d(ridged_fraction, ocean_mask)
-
+        ridged_fraction[~ocean_mask] = np.nan
         # initialize arrays to store BC results for this month
         vicen_arr = np.zeros_like(aicen_arr)
         vsnon_arr = np.zeros_like(aicen_arr)
@@ -441,6 +464,9 @@ def main():
             vice[vice < -1e20] = np.nan
             uice = nearest_fill_2d(uice, ocean_mask)
             vice = nearest_fill_2d(vice, ocean_mask)
+            uice[~ocean_mask] = np.nan
+            vice[~ocean_mask] = np.nan
+
             print("uice after nearest neighbour:", np.nanmin(uice), np.nanmax(uice))
             print("vice after nearest neighbour:", np.nanmin(vice), np.nanmax(vice))
             nc_uv.close()
@@ -638,23 +664,40 @@ def main():
       np.nanmax(ds_daily['aicen'].values))
 
     # create variables and write from ds_daily
-    create_var('aicen', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['aicen'].values
-    create_var('vicen', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['vicen'].values
-    create_var('vsnon', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['vsnon'].values
-    create_var('alvln', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['alvln'].values
-    create_var('vlvln', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['vlvln'].values
-    create_var('Tinz', ('TIME','ncat','nkice','eta_t','xi_t'))[:] = ds_daily['Tinz'].values
-    create_var('Sinz', ('TIME','ncat','nkice','eta_t','xi_t'))[:] = ds_daily['Sinz'].values
-    create_var('Tsnz', ('TIME','ncat','nksnow','eta_t','xi_t'))[:] = ds_daily['Tsnz'].values
-    create_var('Tsfc', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['Tsfc'].values
-    create_var('iage', ('TIME','eta_t','xi_t'))[:] = ds_daily['iage'].values
-    create_var('apondn', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['apondn'].values
-    create_var('hpondn', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['hpondn'].values
-    create_var('ipondn', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['ipondn'].values
-    create_var('fbrine', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['fbrine'].values
-    create_var('hbrine', ('TIME','ncat','eta_t','xi_t'))[:] = ds_daily['hbrine'].values
-    create_var('uvel', ('TIME','eta_t','xi_t'))[:] = ds_daily['uvel'].values
-    create_var('vvel', ('TIME','eta_t','xi_t'))[:] = ds_daily['vvel'].values
+    create_var('aicen', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['aicen'].values)
+    create_var('vicen', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['vicen'].values)
+    create_var('vsnon', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['vsnon'].values)
+    create_var('alvln', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['alvln'].values)
+    create_var('vlvln', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['vlvln'].values)
+    create_var('Tinz', ('TIME','ncat','nkice','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['Tinz'].values)
+    create_var('Sinz', ('TIME','ncat','nkice','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['Sinz'].values)
+    create_var('Tsnz', ('TIME','ncat','nksnow','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['Tsnz'].values)
+    create_var('Tsfc', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['Tsfc'].values)
+    create_var('iage', ('TIME','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['iage'].values)
+    create_var('apondn', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['apondn'].values)
+    create_var('hpondn', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['hpondn'].values)
+    create_var('ipondn', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['ipondn'].values)
+    create_var('fbrine', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['fbrine'].values)
+    create_var('hbrine', ('TIME','ncat','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['hbrine'].values)
+    create_var('uvel', ('TIME','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['uvel'].values)
+    create_var('vvel', ('TIME','eta_t','xi_t'))[:] = \
+            replace_nan_with_fill(ds_daily['vvel'].values)
     
 
 
@@ -709,10 +752,27 @@ def main():
         e_data = data.isel({dims[-1]: -1})
         # determine dims for W/E (drop xi dim)
         new_dims_we = tuple(d for d in dims if d != dims[-1])
-        vW = nc_trim.createVariable(varname + "_W_bry", 'f8', new_dims_we)
-        vE = nc_trim.createVariable(varname + "_E_bry", 'f8', new_dims_we)
-        vW[:] = np.asarray(w_data.values)
-        vE[:] = np.asarray(e_data.values)
+        #vW = nc_trim.createVariable(varname + "_W_bry", 'f8', new_dims_we)
+        vW = nc_trim.createVariable(
+            varname + "_W_bry",
+            'f8',
+            new_dims_we,
+            fill_value=fill_value
+        )
+        vW.missing_value = fill_value
+        #vE = nc_trim.createVariable(varname + "_E_bry", 'f8', new_dims_we)
+        vE = nc_trim.createVariable(
+            varname + "_E_bry",
+            'f8',
+            new_dims_we,
+            fill_value=fill_value
+        )
+        vE.missing_value = fill_value
+
+        #vW[:] = np.asarray(w_data.values)
+        #vE[:] = np.asarray(e_data.values)
+        vW[:] = replace_nan_with_fill(w_data.values)
+        vE[:] = replace_nan_with_fill(e_data.values)
 
         # South/North: remove eta_t dimension (assume it's the second-to-last or find index)
         # find index of eta-like dim (commonly 'eta_t' or dims[-2])
@@ -727,10 +787,27 @@ def main():
         n_data = data.isel({eta_dim: -1})
         # dims for S/N: drop the eta_dim
         new_dims_sn = tuple(d for d in dims if d != eta_dim)
-        vS = nc_trim.createVariable(varname + "_S_bry", 'f8', new_dims_sn)
-        vN = nc_trim.createVariable(varname + "_N_bry", 'f8', new_dims_sn)
-        vS[:] = np.asarray(s_data.values)
-        vN[:] = np.asarray(n_data.values)
+        #vS = nc_trim.createVariable(varname + "_S_bry", 'f8', new_dims_sn)
+        vS = nc_trim.createVariable(
+            varname + "_S_bry",
+            'f8',
+            new_dims_sn,
+            fill_value=fill_value
+        )
+        vS.missing_value = fill_value
+        #vN = nc_trim.createVariable(varname + "_N_bry", 'f8', new_dims_sn)
+        vN = nc_trim.createVariable(
+            varname + "_N_bry",
+            'f8',
+            new_dims_sn,
+            fill_value=fill_value
+        )
+        vN.missing_value = fill_value
+
+        #vS[:] = np.asarray(s_data.values)
+        #vN[:] = np.asarray(n_data.values)
+        vS[:] = replace_nan_with_fill(s_data.values)
+        vN[:] = replace_nan_with_fill(n_data.values)
 
     nc_trim.close()
     nc_out.close()
