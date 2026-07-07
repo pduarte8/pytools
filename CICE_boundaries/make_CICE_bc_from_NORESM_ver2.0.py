@@ -607,6 +607,33 @@ def main():
     ds_daily = ds_daily.sel(time=slice(start_daily.strftime('%Y-%m-%d'), end_daily.strftime('%Y-%m-%d')))
     print("Interpolated to daily: nt =", len(ds_daily['time'].values))
 
+
+    # --------------------------------------------------
+    # Final physical sanitization
+    # --------------------------------------------------
+    # Non-negative variables
+    for var in ['vicen', 'vsnon', 'alvln', 'vlvln',
+            'Sinz', 'iage',
+            'apondn', 'hpondn', 'ipondn',
+            'hbrine']:
+        ds_daily[var] = ds_daily[var].clip(min=0.0)
+
+    # Fraction variables
+    for var in ['aicen', 'fbrine']:
+        ds_daily[var] = ds_daily[var].clip(min=0.0, max=1.0)
+
+    # Sum of all ice categories
+    total = ds_daily['aicen'].sum(dim='ncat')
+
+    # Scaling factor (only where total > 1)
+    scale = xr.where(total > 1.0,
+                 1.0 / total,
+                 1.0)
+
+    # Apply scaling to every category
+    ds_daily['aicen'] = ds_daily['aicen'] * scale
+
+
     # -----------------------
     # Write untrimmed daily BC netCDF (full fields)
     # -----------------------
