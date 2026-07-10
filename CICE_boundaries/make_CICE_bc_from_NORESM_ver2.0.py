@@ -332,7 +332,13 @@ def main():
         # read the first time index fields (monthly files are single-time)
         aice = nc.variables['aice'][0, :, :]
         hi = nc.variables['hi'][0, :, :]
+        
         iceage = nc.variables['siage'][0, :, :]
+        print("After reading:", np.nanmin(iceage), np.nanmax(iceage))
+
+        t_snoice = nc.variables['sitempsnic'][0,:,:].copy() - 273.15 
+        t_ice_top = nc.variables['sitemptop'][0,:,:].copy() - 273.15
+        t_ice_bot = nc.variables['sitempbot'][0,:,:]. copy() - 273.15
         nj_read, ni_read = aice.shape
 
         # DIAGNOSTIC SNIPPET - paste this in the script right after `nc = netCDF4.Dataset(combined_outfile, 'r')
@@ -358,7 +364,7 @@ def main():
         # atmosphere t2m
         nc_t2m = netCDF4.Dataset(out_atm, 'r')
         t2m = nc_t2m.variables['TS'][:]
-        t2m_now = t2m[0, :, :]
+        t2m_now = t2m[0, :, :] - 273.15
         nc_t2m.close()
         # read category variables
         aicen_arr = np.zeros((ncat, nj, ni))   # sea ice conc. of i-th category
@@ -381,13 +387,25 @@ def main():
         hin_arr   = np.where(hin_arr == fill, np.nan, hin_arr)
         hsn_arr   = np.where(hsn_arr == fill, np.nan, hsn_arr)
         ridged_fraction = np.where(ridged_fraction == fill, np.nan, ridged_fraction)
+        #iceage = np.where(iceage == fill, np.nan, iceage)
+        # Convert masked values directly to NaN
+        if np.ma.isMaskedArray(iceage):
+            iceage = iceage.filled(np.nan)
+        else:
+            iceage = np.asarray(iceage, dtype=float)
+
+        # Safety check
+        iceage[iceage > 1e20] = np.nan
+        iceage[iceage < -1e20] = np.nan
+
 
         # apply physical bounds (only for aicen)
         aicen_arr[(aicen_arr < 0) | (aicen_arr > 1)] = np.nan
         hin_arr[hin_arr < 0] = np.nan
         hsn_arr[hsn_arr < 0] = np.nan
         ridged_fraction[(ridged_fraction < 0) | (ridged_fraction > 1)] = np.nan
-        
+        iceage[(iceage < 0)] = np.nan
+
         for nc in range(ncat):
 
             aicen_arr[nc] = nearest_fill_2d(aicen_arr[nc], ocean_mask)
@@ -404,6 +422,21 @@ def main():
         
         ridged_fraction = nearest_fill_2d(ridged_fraction, ocean_mask)
         ridged_fraction[~ocean_mask] = np.nan
+
+        t_snoice = nearest_fill_2d(t_snoice, ocean_mask)
+        t_ice_top = nearest_fill_2d(t_ice_top, ocean_mask)
+        t_ice_bot = nearest_fill_2d(t_ice_bot, ocean_mask)
+
+        t_snoice[~ocean_mask] = np.nan
+        t_ice_top[~ocean_mask] = np.nan
+        t_ice_bot[~ocean_mask] = np.nan
+        print("NaNs before fill:", np.sum(np.isnan(iceage)))
+        print("1e30 before fill:", np.sum(iceage == 1e30))
+        print("max before fill:", np.nanmax(iceage))
+        iceage = nearest_fill_2d(iceage, ocean_mask)
+        print("After nearest_fill:", np.nanmin(iceage), np.nanmax(iceage))
+        iceage[~ocean_mask] = np.nan
+        #iceage[ocean_mask]  = min(iceage,0.0)
         # initialize arrays to store BC results for this month
         vicen_arr = np.zeros_like(aicen_arr)
         vsnon_arr = np.zeros_like(aicen_arr)
@@ -412,10 +445,6 @@ def main():
         t_ice = np.zeros((ncat, nice_layer, nj, ni))
         s_ice = np.zeros((ncat, nice_layer, nj, ni))
         tsnow = np.zeros((ncat, nsnow_layer, nj, ni))
-        # t_snoice, t_ice_top, t_ice_bot left as zeros (original code assigned them earlier)
-        t_snoice = np.zeros((nj, ni))
-        t_ice_top = np.zeros((nj, ni))
-        t_ice_bot = np.zeros((nj, ni))
 
         # compute derived category-level BC arrays
         for j in range(nj):
@@ -490,10 +519,12 @@ def main():
         store['Tsnz'].append(tsnow.copy())
         # Tsfc: clipped t2m per category
         Tsfc_cat = np.zeros((ncat, nj, ni))
-        t2m_now_clip = np.where(t2m_now > -1.0e-5, t2m_now, -1.0e-5)
+        t2m_now_clip = np.where(t2m_now < -1.0e-5, t2m_now, -1.0e-5)
         for n in range(ncat):
-            Tsfc_cat[n,:,:] = t2m_now_clip
+            Tsfc_cat[n,:,:] = t2m_now_clip  
         store['Tsfc'].append(Tsfc_cat)
+
+        print("Before storing:", np.nanmin(iceage), np.nanmax(iceage))
         store['iage'].append(iceage.copy())
         store['apondn'].append(np.zeros((ncat, nj, ni)))
         store['hpondn'].append(np.zeros((ncat, nj, ni)))
@@ -632,8 +663,9 @@ def main():
 
     # Apply scaling to every category
     ds_daily['aicen'] = ds_daily['aicen'] * scale
+    ds_daily['iage'] = ds_daily['iage'] / (24.0 * 365.0) #Converting age to days
 
-
+    ds_daily['iage'] = ds_daily['iage'].where(ds_daily['aicen'].sum(dim='ncat') > 0.0, 0.0)
     # -----------------------
     # Write untrimmed daily BC netCDF (full fields)
     # -----------------------
@@ -760,7 +792,7 @@ def main():
     # write oriented variables: for each var in ds_daily that has dims >=3 create _W/_E/_S/_N
     def safe_attrs_from(varname):
         return {}
-
+    ocean_mask = (tmask > 0)
     for varname in ds_daily.data_vars:
         dims = ds_daily[varname].dims
         nd = len(dims)
@@ -779,28 +811,26 @@ def main():
         e_data = data.isel({dims[-1]: -1})
         # determine dims for W/E (drop xi dim)
         new_dims_we = tuple(d for d in dims if d != dims[-1])
-        #vW = nc_trim.createVariable(varname + "_W_bry", 'f8', new_dims_we)
         vW = nc_trim.createVariable(
             varname + "_W_bry",
             'f8',
             new_dims_we,
-            fill_value=fill_value
         )
         vW.missing_value = fill_value
-        #vE = nc_trim.createVariable(varname + "_E_bry", 'f8', new_dims_we)
+        w = np.asarray(w_data.values).copy()
+        w = np.nan_to_num(w, nan=0.0)
+        w[..., ~ocean_mask[:, 0]] = 0.0
+        vW[:] = w
         vE = nc_trim.createVariable(
             varname + "_E_bry",
             'f8',
             new_dims_we,
-            fill_value=fill_value
         )
         vE.missing_value = fill_value
-
-        #vW[:] = np.asarray(w_data.values)
-        #vE[:] = np.asarray(e_data.values)
-        vW[:] = replace_nan_with_fill(w_data.values)
-        vE[:] = replace_nan_with_fill(e_data.values)
-
+        e = np.asarray(e_data.values).copy()
+        e = np.nan_to_num(e, nan=0.0)
+        e[..., ~ocean_mask[:, -1]] = 0.0
+        vE[:] = e
         # South/North: remove eta_t dimension (assume it's the second-to-last or find index)
         # find index of eta-like dim (commonly 'eta_t' or dims[-2])
         eta_dim = None
@@ -814,28 +844,26 @@ def main():
         n_data = data.isel({eta_dim: -1})
         # dims for S/N: drop the eta_dim
         new_dims_sn = tuple(d for d in dims if d != eta_dim)
-        #vS = nc_trim.createVariable(varname + "_S_bry", 'f8', new_dims_sn)
         vS = nc_trim.createVariable(
             varname + "_S_bry",
             'f8',
             new_dims_sn,
-            fill_value=fill_value
         )
         vS.missing_value = fill_value
-        #vN = nc_trim.createVariable(varname + "_N_bry", 'f8', new_dims_sn)
+        s = np.asarray(s_data.values).copy()
+        s = np.nan_to_num(s, nan=0.0)
+        s[..., ~ocean_mask[0, :]] = 0.0
+        vS[:] = s
         vN = nc_trim.createVariable(
             varname + "_N_bry",
             'f8',
             new_dims_sn,
-            fill_value=fill_value
         )
         vN.missing_value = fill_value
-
-        #vS[:] = np.asarray(s_data.values)
-        #vN[:] = np.asarray(n_data.values)
-        vS[:] = replace_nan_with_fill(s_data.values)
-        vN[:] = replace_nan_with_fill(n_data.values)
-
+        n = np.asarray(n_data.values).copy()
+        n = np.nan_to_num(n, nan=0.0)
+        n[..., ~ocean_mask[-1, :]] = 0.0
+        vN[:] = n
     nc_trim.close()
     nc_out.close()
     print("Wrote trimmed BC file with oriented variables:", trimmed_name)
