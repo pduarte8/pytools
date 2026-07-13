@@ -130,7 +130,7 @@ def main():
     fname_atm_pattern = "NSSP585frc2_f09_tn14_20191105.cam.h0.{date}.nc"
 
     bc_file_name = 'cice_bc_from_NORESM'
-    year = 2023   # target year to create BC for (one-file-per-year)
+    year = 2025   # target year to create BC for (one-file-per-year)
     # -----------------------
     # Variables and constants (as in your script)
     # -----------------------
@@ -452,7 +452,7 @@ def main():
                 if aice[j, i] > 0.01 and hi[j, i] > 0.01:
                     age = iceage[j ,i] / (3600.0 * 24.0 * 365.0)
                     for nnc in range(ncat):
-                        if aicen_arr[nnc, j, i] > 0.01 and hin_arr[nnc, j, i] > 0.01:
+                        if aicen_arr[nnc, j, i] > 0.01 and hin_arr[nnc, j, i] > 0.01: 
                             vicen_arr[nnc, j, i] = hin_arr[nnc, j, i] * aicen_arr[nnc, j ,i]
                             vsnon_arr[nnc, j, i] = hsn_arr[nnc, j, i] * aicen_arr[nnc, j ,i]
                             alvl_arr[nnc, j, i] = (1.0 - ridged_fraction[j, i]) * aicen_arr[nnc, j, i]
@@ -472,7 +472,22 @@ def main():
                                     s_ice[nnc, k, j, i] = 0.5 * s_max * (1.0 - np.cos(theta))
                                 else:
                                     s_ice[nnc, k, j, i] = 19.539 * z**2 - 19.93 * z + 8.913
+                        else:
+                            aicen_arr[nnc, j, i] = 0.0
 
+                            hin_arr[nnc, j, i]   = 0.0
+                            hsn_arr[nnc, j, i]   = 0.0
+
+                            vicen_arr[nnc, j, i] = 0.0
+                            vsnon_arr[nnc, j, i] = 0.0
+                            alvl_arr[nnc, j, i]  = 0.0
+                            vlvl_arr[nnc, j, i]  = 0.0
+
+                            t_ice[nnc, :, j, i] = 0.0
+                            s_ice[nnc, :, j, i] = 0.0
+                            tsnow[nnc, :, j, i] = 0.0
+                else:            
+                    iceage[j, i] = 0.0                                
         # velocities: read from earlier temp_uv (we created out uv netcdf per month)
         # Use u/v arrays we stored into ds_out_combined if present, otherwise fallback to combined file
         try:
@@ -649,6 +664,9 @@ def main():
             'hbrine']:
         ds_daily[var] = ds_daily[var].clip(min=0.0)
 
+    bad = ((ds_daily['aicen'] > 0.0) & (ds_daily['vicen'] == 0.0)).sum()
+    print(f'Cells with aicen>0 but vicen=0: {int(bad)}')
+
     # Fraction variables
     for var in ['aicen', 'fbrine']:
         ds_daily[var] = ds_daily[var].clip(min=0.0, max=1.0)
@@ -666,6 +684,14 @@ def main():
     ds_daily['iage'] = ds_daily['iage'] / (24.0 * 365.0) #Converting age to days
 
     ds_daily['iage'] = ds_daily['iage'].where(ds_daily['aicen'].sum(dim='ncat') > 0.0, 0.0)
+
+    low_threshold_mask = (ds_daily['aicen'] < 0.01) | (ds_daily['vicen'] < 0.01) 
+    for var in ['aicen', 'vicen', 'vsnon',
+            'alvln', 'vlvln',
+            'apondn', 'hpondn', 'ipondn']:
+        ds_daily[var] = ds_daily[var].where(~low_threshold_mask, 0.0)
+
+
     # -----------------------
     # Write untrimmed daily BC netCDF (full fields)
     # -----------------------
