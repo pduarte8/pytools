@@ -56,15 +56,15 @@ CICE_KMT_FILE = "/cluster/shared/arcticfjord/input_data/s800_cice_processed_a4_m
 
 BC_FILE_PREFIX = "cice_bc_from_NORESM"
 
-YEAR = 2024
+YEAR = 2025
 
 # -------------------------------------------------------------------------
 # TEST SETTINGS
 #
 # For a one-month test:
 #
-# TEST_START = "2023-01-01"
-# TEST_END   = "2023-01-31"
+#TEST_START = "2025-01-01"
+#TEST_END   = "2025-01-31"
 #
 # For the full year:
 #
@@ -1302,22 +1302,23 @@ def create_output_variable(
     long_name,
 ):
     """
-    Create output variable with both _FillValue and missing_value.
+    Create a CICE boundary variable.
+
+    Values are explicitly written at every cell, including land cells,
+    where zero is used. Do not use a negative fill value because CICE
+    transport can interpret it as negative ice area.
     """
     variable = nc_out.createVariable(
         name,
         "f8",
         dimensions,
-        fill_value=FILL_VALUE,
         zlib=False,
     )
 
-    variable.missing_value = FILL_VALUE
     variable.units = units
     variable.long_name = long_name
 
     return variable
-
 
 def create_boundary_file(
     outfile,
@@ -1578,36 +1579,38 @@ def create_boundary_file(
     return nc_out
 
 
-def apply_land_fill(
+def apply_land_zero(
     field,
     ocean_mask,
 ):
     """
-    Apply fill value to target land cells.
+    Prepare a CICE boundary field for output.
 
-    Supports 2-D, 3-D and 4-D fields whose final dimensions are nj, ni.
+    CICE transport must never see negative fill values in ice state
+    variables. Therefore:
+
+      * valid ocean values are retained;
+      * invalid ocean values cause an error;
+      * land/inactive target cells are written as zero.
+
+    Supports 2-D, 3-D, and 4-D fields whose final dimensions are nj, ni.
     """
-    field = np.asarray(field, dtype=np.float64)
+    field = np.asarray(field, dtype=np.float64).copy()
 
+    # Check specifically for invalid values at active ocean cells.
     if field.ndim == 2:
-        output = np.where(
-            ocean_mask,
-            field,
-            FILL_VALUE,
-        )
+        invalid_ocean = ocean_mask & ~np.isfinite(field)
 
     elif field.ndim == 3:
-        output = np.where(
-            ocean_mask[None, :, :],
-            field,
-            FILL_VALUE,
+        invalid_ocean = (
+            ocean_mask[None, :, :]
+            & ~np.isfinite(field)
         )
 
     elif field.ndim == 4:
-        output = np.where(
-            ocean_mask[None, None, :, :],
-            field,
-            FILL_VALUE,
+        invalid_ocean = (
+            ocean_mask[None, None, :, :]
+            & ~np.isfinite(field)
         )
 
     else:
@@ -1615,8 +1618,30 @@ def apply_land_fill(
             f"Unsupported field dimensions: {field.shape}"
         )
 
-    return replace_invalid_with_fill(output)
+    if np.any(invalid_ocean):
+        raise ValueError(
+            "Invalid values found on target ocean cells before output: "
+            f"{np.count_nonzero(invalid_ocean)} values."
+        )
 
+    # Important: CICE should receive zero—not -9999—at land/inactive cells.
+    output = np.nan_to_num(
+        field,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+
+    if field.ndim == 2:
+        output[~ocean_mask] = 0.0
+
+    elif field.ndim == 3:
+        output[:, ~ocean_mask] = 0.0
+
+    elif field.ndim == 4:
+        output[:, :, ~ocean_mask] = 0.0
+
+    return output
 
 def make_trimmed_boundary_file(
     full_file,
@@ -1632,7 +1657,8 @@ def make_trimmed_boundary_file(
         "w",
         format="NETCDF3_64BIT_OFFSET",
     ) as dst:
-
+        # Preserve exact numeric data rather than propagating masked arrays.
+        src.set_auto_mask(False) 
         # Dimensions.
         for dim_name, dim in src.dimensions.items():
             dst.createDimension(
@@ -2063,91 +2089,125 @@ def main():
                     f"(max sum(aicen)={max_aice:.6f})"
                 )
 
+            # -----------------------------------------------------------------
+            # Mandatory physical checks before writing CICE concentration.
+            # -----------------------------------------------------------------
+
+            aicen_check = daily_fields["aicen"]
+
+            if np.any(~np.isfinite(aicen_check[:, target_ocean_mask])):
+                raise ValueError(
+                    f"{date_now:%Y-%m-%d}: aicen contains NaN/Inf at ocean cells."
+                )
+
+            if np.any(aicen_check[:, target_ocean_mask] < 0.0):
+                raise ValueError(
+                    f"{date_now:%Y-%m-%d}: aicen contains negative values at ocean cells."
+                 )
+
+            if np.any(aicen_check[:, target_ocean_mask] > 1.0 + 1.0e-10):
+                raise ValueError(
+                    f"{date_now:%Y-%m-%d}: aicen contains values above 1 at ocean cells."
+                 )
+
+            aice_total_check = np.sum(aicen_check, axis=0)
+
+            if np.any(aice_total_check[target_ocean_mask] < 0.0):
+                raise ValueError(
+                    f"{date_now:%Y-%m-%d}: total aicen is negative at ocean cells."
+                )
+
+            if np.any(aice_total_check[target_ocean_mask] > 1.0 + 1.0e-8):
+                raise ValueError(
+                    f"{date_now:%Y-%m-%d}: total aicen exceeds 1 at ocean cells."
+                )
+
+
             # -------------------------------------------------------------
             # Apply target-land fill values and write daily record.
             # -------------------------------------------------------------
 
-            aicen_write = apply_land_fill(
+            aicen_write = apply_land_zero(
                 daily_fields["aicen"],
                 target_ocean_mask,
             )
 
-            vicen_write = apply_land_fill(
+            vicen_write = apply_land_zero(
                 daily_fields["vicen"],
                 target_ocean_mask,
             )
 
-            vsnon_write = apply_land_fill(
+            vsnon_write = apply_land_zero(
                 daily_fields["vsnon"],
                 target_ocean_mask,
             )
 
-            alvln_write = apply_land_fill(
+            alvln_write = apply_land_zero(
                 daily_fields["alvln"],
                 target_ocean_mask,
             )
 
-            vlvln_write = apply_land_fill(
+            vlvln_write = apply_land_zero(
                 daily_fields["vlvln"],
                 target_ocean_mask,
             )
 
-            Tinz_write = apply_land_fill(
+            Tinz_write = apply_land_zero(
                 daily_fields["Tinz"],
                 target_ocean_mask,
             )
 
-            Sinz_write = apply_land_fill(
+            Sinz_write = apply_land_zero(
                 daily_fields["Sinz"],
                 target_ocean_mask,
             )
 
-            Tsnz_write = apply_land_fill(
+            Tsnz_write = apply_land_zero(
                 daily_fields["Tsnz"],
                 target_ocean_mask,
             )
 
-            Tsfc_write = apply_land_fill(
+            Tsfc_write = apply_land_zero(
                 daily_fields["Tsfc"],
                 target_ocean_mask,
             )
 
-            iage_write = apply_land_fill(
+            iage_write = apply_land_zero(
                 daily_fields["iage"],
                 target_ocean_mask,
             )
 
-            apondn_write = apply_land_fill(
+            apondn_write = apply_land_zero(
                 daily_fields["apondn"],
                 target_ocean_mask,
             )
 
-            hpondn_write = apply_land_fill(
+            hpondn_write = apply_land_zero(
                 daily_fields["hpondn"],
                 target_ocean_mask,
             )
 
-            ipondn_write = apply_land_fill(
+            ipondn_write = apply_land_zero(
                 daily_fields["ipondn"],
                 target_ocean_mask,
             )
 
-            fbrine_write = apply_land_fill(
+            fbrine_write = apply_land_zero(
                 daily_fields["fbrine"],
                 target_ocean_mask,
             )
 
-            hbrine_write = apply_land_fill(
+            hbrine_write = apply_land_zero(
                 daily_fields["hbrine"],
                 target_ocean_mask,
             )
 
-            uvel_write = apply_land_fill(
+            uvel_write = apply_land_zero(
                 daily_fields["uvel"],
                 target_ocean_mask,
             )
 
-            vvel_write = apply_land_fill(
+            vvel_write = apply_land_zero(
                 daily_fields["vvel"],
                 target_ocean_mask,
             )
@@ -2264,6 +2324,8 @@ def main():
         trimmed_file=trimmed_file,
     )
 
+    validate_trimmed_aicen(trimmed_file)
+
     KEEP_FULL_DOMAIN_FILE = False
 
     if not KEEP_FULL_DOMAIN_FILE:
@@ -2271,7 +2333,7 @@ def main():
             "Removing full-domain intermediate file:",
             full_boundary_file,
         )
-    os.remove(full_boundary_file)
+        os.remove(full_boundary_file)
 
     print("\n" + "=" * 80)
     print("Finished successfully.")
@@ -2285,6 +2347,53 @@ def main():
 
     print("Written daily records:")
     print(" ", output_index)
+
+
+def validate_trimmed_aicen(trimmed_file):
+    """
+    Verify that the trimmed CICE boundary file has no negative,
+    NaN, Inf, or fill values in aicen boundary fields.
+    """
+    boundary_names = [
+        "aicen_W_bry",
+        "aicen_E_bry",
+        "aicen_S_bry",
+        "aicen_N_bry",
+    ]
+
+    with netCDF4.Dataset(trimmed_file, "r") as nc:
+        for name in boundary_names:
+
+            var = nc.variables[name]
+
+            # Read literal stored data, not a masked array.
+            var.set_auto_maskandscale(False)
+            data = np.asarray(var[:], dtype=np.float64)
+
+            print("\nValidation:", name)
+            print("  shape:", data.shape)
+            print("  min  :", np.nanmin(data))
+            print("  max  :", np.nanmax(data))
+            print("  -9999 count:", np.count_nonzero(data == -9999.0))
+            print("  NaN count  :", np.count_nonzero(np.isnan(data)))
+            print("  Inf count  :", np.count_nonzero(~np.isfinite(data)))
+            print("  negative count:", np.count_nonzero(data < 0.0))
+
+            if np.any(~np.isfinite(data)):
+                raise ValueError(
+                    f"{name} contains NaN or Inf values."
+                )
+
+            if np.any(data < 0.0):
+                raise ValueError(
+                    f"{name} contains negative values. "
+                    "CICE cannot safely remap negative ice area."
+                )
+
+            if np.any(data > 1.0 + 1.0e-8):
+                raise ValueError(
+                    f"{name} contains concentration values above 1."
+                )
 
 
 if __name__ == "__main__":

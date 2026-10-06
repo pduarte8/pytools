@@ -1,45 +1,62 @@
+#!/usr/bin/env python3
+
 import netCDF4
 import numpy as np
 
-filename = "cice_bc_from_NORESM.2023.nc"
+filename = "cice_bc_from_NORESM.trimmed.2025.nc"
 
-with netCDF4.Dataset(filename) as nc:
-    nc.set_auto_mask(False)
+boundary_names = [
+    "aicen_W_bry",
+    "aicen_E_bry",
+    "aicen_S_bry",
+    "aicen_N_bry",
+]
 
-    aicen = nc.variables["aicen"][0]
-    vicen = nc.variables["vicen"][0]
-    vsnon = nc.variables["vsnon"][0]
+with netCDF4.Dataset(filename, "r") as nc:
 
-valid = aicen[0] != -9999.0
+    for name in boundary_names:
 
-aicen_clean = np.where(aicen == -9999.0, 0.0, aicen)
-vicen_clean = np.where(vicen == -9999.0, 0.0, vicen)
-vsnon_clean = np.where(vsnon == -9999.0, 0.0, vsnon)
+        var = nc.variables[name]
 
-aice_total = np.sum(aicen_clean, axis=0)
-vice_total = np.sum(vicen_clean, axis=0)
-vsno_total = np.sum(vsnon_clean, axis=0)
+        # Read stored numerical values directly; do not turn values into
+        # masked arrays.
+        var.set_auto_maskandscale(False)
+        aicen = np.asarray(var[:], dtype=np.float64)
 
-print("Minimum category concentration:", np.min(aicen_clean))
-print("Maximum category concentration:", np.max(aicen_clean))
-print("Maximum sum(aicen):", np.max(aice_total[valid]))
+        # Dimensions: (TIME, ncat, boundary_point)
+        aice_total = np.sum(aicen, axis=1)
 
-print("Minimum vicen:", np.min(vicen_clean))
-print("Minimum vsnon:", np.min(vsnon_clean))
+        print("\n" + "=" * 70)
+        print(name)
+        print("shape:", aicen.shape)
 
-hice = np.divide(
-    vice_total,
-    aice_total,
-    out=np.zeros_like(vice_total),
-    where=aice_total > 1.0e-12,
-)
+        print("aicen minimum:", np.min(aicen))
+        print("aicen maximum:", np.max(aicen))
 
-hsnow = np.divide(
-    vsno_total,
-    aice_total,
-    out=np.zeros_like(vsno_total),
-    where=aice_total > 1.0e-12,
-)
+        print("-9999 count:", np.count_nonzero(aicen == -9999.0))
+        print("NaN count:", np.count_nonzero(np.isnan(aicen)))
+        print("Inf count:", np.count_nonzero(np.isinf(aicen)))
+        print("negative aicen count:", np.count_nonzero(aicen < 0.0))
+        print("aicen > 1 count:", np.count_nonzero(aicen > 1.000001))
 
-print("Maximum mean ice thickness over ice [m]:", np.max(hice))
-print("Maximum mean snow depth over ice [m]:", np.max(hsnow))
+        print("sum(aicen) minimum:", np.min(aice_total))
+        print("sum(aicen) maximum:", np.max(aice_total))
+        print("negative sum(aicen) count:",
+              np.count_nonzero(aice_total < 0.0))
+        print("sum(aicen) > 1 count:",
+              np.count_nonzero(aice_total > 1.000001))
+
+        # Stop immediately if CICE could receive invalid ice area.
+        if np.any(~np.isfinite(aicen)):
+            raise ValueError(f"{name}: contains NaN or Inf.")
+
+        if np.any(aicen < 0.0):
+            raise ValueError(f"{name}: contains negative category area.")
+
+        if np.any(aice_total < 0.0):
+            raise ValueError(f"{name}: has negative total ice area.")
+
+        if np.any(aice_total > 1.000001):
+            raise ValueError(f"{name}: total ice area exceeds 1.")
+
+print("\nPASS: all aicen boundary fields are finite and physically valid.")
